@@ -1,0 +1,23 @@
+name: DualCamera
+options:
+  deploymentTarget:
+    iOS: "17.0"
+  groupSortPosition: top
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    PRODUCT_BUNDLE_IDENTIFIER: com.example.dualcamera
+targets:
+  DualCamera:
+    type: application
+    platform: iOS
+    sources:
+      - path: DualCamera
+    settings:
+      base:
+        INFOPLIST_FILE: DualCamera/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1"
+        PRODUCT_NAME: "双摄相机"
+        SUPPORTS_MACCATALYST: NO
+        SWIFT_STRICT_CONCURRENCY: minimal

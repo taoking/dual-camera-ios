@@ -1,0 +1,29 @@
+# Xcode
+DerivedData/
+build/
+*.xcuserstate
+*.xcscmblueprint
+xcuserdata/
+
+# Swift Package Manager
+.build/
+Packages/
+
+# CocoaPods and Carthage build products
+Pods/
+Carthage/Build/
+
+# Fastlane artifacts
+fastlane/report.xml
+fastlane/Preview.html
+fastlane/screenshots/
+fastlane/test_output/
+
+# Finder and editor files
+.DS_Store
+.idea/
+
+# Local secrets and signing material
+*.mobileprovision
+*.p12
+*.cer
