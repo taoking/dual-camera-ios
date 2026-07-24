@@ -63,7 +63,7 @@ xcodebuild -project DualCamera.xcodeproj -scheme DualCamera \
   -sdk iphoneos -configuration Debug CODE_SIGNING_ALLOWED=NO build
 ```
 
-当前工作区已通过前两项校验和工程生成。完整 `xcodebuild` 受本机 Xcode 平台组件安装状态限制（命令行提示“iOS 26.5 is not installed”）而未能执行到编译阶段；安装对应 iOS 平台组件后即可运行上述命令。真机验收仍应覆盖两个预览、连续快门、锁屏/切后台恢复和高温/系统中断提示。
+本工作区已通过 Swift 类型检查、`Info.plist` 校验、工程生成和 iPhoneOS 设备 SDK 完整构建。为解决初始的 Xcode 平台组件缺失，已安装 iOS 26.5 Simulator（arm64）；随后以上 iPhoneOS 构建命令获得 `BUILD SUCCEEDED`。真机验收仍应覆盖两个预览、连续快门、锁屏/切后台恢复和高温/系统中断提示。
 
 ## 隐私
 
