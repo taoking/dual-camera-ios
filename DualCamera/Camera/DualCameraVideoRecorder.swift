@@ -7,6 +7,7 @@ import ImageIO
 
 /// 将两个视频数据输出合成为一条竖屏画中画视频轨道，并同步写入麦克风音频。
 /// 该类型只由 `DualCameraController.sessionQueue` 调用。
+/// 保留的实验性双摄视频录制器；本轮未扩展其布局协议。
 final class DualCameraVideoRecorder {
     private let outputURL: URL
     private let canvasSize = CGSize(width: 720, height: 1_280)

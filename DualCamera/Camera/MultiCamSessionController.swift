@@ -5,122 +5,26 @@ import CoreVideo
 import Photos
 import UIKit
 
-enum RearCameraOption: String, CaseIterable, Identifiable, Equatable {
-    case ultraWide
-    case wide
-    case telephoto
-
-    var id: String { rawValue }
-
-    var deviceType: AVCaptureDevice.DeviceType {
-        switch self {
-        case .ultraWide:
-            return .builtInUltraWideCamera
-        case .wide:
-            return .builtInWideAngleCamera
-        case .telephoto:
-            return .builtInTelephotoCamera
-        }
-    }
-
-    var title: String {
-        switch self {
-        case .ultraWide:
-            return "超广角"
-        case .wide:
-            return "广角"
-        case .telephoto:
-            return "长焦"
-        }
-    }
-
-    var zoomLabel: String {
-        switch self {
-        case .ultraWide:
-            return "0.5×"
-        case .wide:
-            return "1×"
-        case .telephoto:
-            return "长焦"
-        }
-    }
-
-    var symbolName: String {
-        switch self {
-        case .ultraWide:
-            return "camera.metering.multispot"
-        case .wide:
-            return "camera"
-        case .telephoto:
-            return "camera.aperture"
-        }
-    }
-}
-
-enum CameraState: Equatable {
-    case idle
-    case requestingAuthorization
-    case requestingMicrophoneAuthorization
-    case ready
-    case permissionDenied
-    case microphonePermissionDenied
-    case unsupported(String)
-    case failed(String)
-
-    var isReady: Bool {
-        if case .ready = self {
-            return true
-        }
-        return false
-    }
-
-    var message: String? {
-        switch self {
-        case .idle, .ready:
-            return nil
-        case .requestingAuthorization:
-            return "正在请求相机权限…"
-        case .requestingMicrophoneAuthorization:
-            return "正在请求麦克风权限…"
-        case .permissionDenied:
-            return "请在“设置”中允许相机权限后重试。"
-        case .microphonePermissionDenied:
-            return "视频录制需要麦克风权限，请在“设置”中允许后重试。"
-        case .unsupported(let detail), .failed(let detail):
-            return detail
-        }
-    }
-
-    var symbolName: String {
-        switch self {
-        case .requestingAuthorization:
-            return "camera.fill"
-        case .requestingMicrophoneAuthorization:
-            return "mic.fill"
-        case .permissionDenied, .microphonePermissionDenied, .unsupported, .failed:
-            return "exclamationmark.triangle.fill"
-        case .idle, .ready:
-            return "camera"
-        }
-    }
-}
-
 private enum CaptureMode {
     case photo
     case video
 }
 
-final class DualCameraController: NSObject, ObservableObject {
+/// 仅负责 AVFoundation 会话和媒体采集；界面状态由 CameraViewModel 订阅并呈现。
+final class MultiCamSessionController: NSObject, ObservableObject {
     @Published private(set) var state: CameraState = .idle
     @Published private(set) var isCapturing = false
     @Published private(set) var isRecording = false
     @Published private(set) var recordingDuration: TimeInterval = 0
     @Published private(set) var isSavingMedia = false
-    @Published private(set) var latestPhoto: UIImage?
+    @Published private(set) var latestPhotoSet: CapturedPhotoSet?
     @Published private(set) var latestVideoURL: URL?
-    @Published private(set) var mediaMessage: String?
+    @Published private(set) var notice: CameraNotice?
     @Published private(set) var availableRearCameras: [RearCameraOption] = []
     @Published private(set) var selectedRearCamera: RearCameraOption = .wide
+    @Published private(set) var diagnostics = CameraDiagnostics.empty
+    @Published private(set) var zoomFactor: CGFloat = 1
+    @Published private(set) var isFakeCamera = ProcessInfo.processInfo.arguments.contains("-fakeCamera")
 
     let session: AVCaptureMultiCamSession
     let backPreviewLayer: AVCaptureVideoPreviewLayer
@@ -132,23 +36,32 @@ final class DualCameraController: NSObject, ObservableObject {
     private var captureMode: CaptureMode = .photo
     private var desiredRearCamera: RearCameraOption = .wide
     private var supportedRearCameraOptions = [RearCameraOption]()
+    private var captureLayout = DualCameraLayout.default
+    private var captureAspectRatio: CaptureAspectRatio = .threeByFour
+    private var captureQuality: CaptureQuality = .balanced
+    private var photoSaveMode: PhotoSaveMode = .composedOnly
 
     private var backPhotoOutput: AVCapturePhotoOutput?
     private var frontPhotoOutput: AVCapturePhotoOutput?
     private var backVideoOutput: AVCaptureVideoDataOutput?
     private var frontVideoOutput: AVCaptureVideoDataOutput?
     private var audioOutput: AVCaptureAudioDataOutput?
+    private var frontPreviewConnection: AVCaptureConnection?
+    private var frontPhotoConnection: AVCaptureConnection?
+    private var backDevice: AVCaptureDevice?
     private var latestFrontSampleBuffer: CMSampleBuffer?
     private var videoRecorder: DualCameraVideoRecorder?
     private var recordingTimer: Timer?
     private var recordingStartedAt: Date?
 
-    private var activeCaptureID: UUID?
-    private var expectedCapturePositions = Set<AVCaptureDevice.Position>()
-    private var captureResults = [AVCaptureDevice.Position: UIImage]()
-    private var captureErrors = [String]()
+    private var activeCaptureTransaction: CaptureTransaction?
+    /// 图片已从两个输出返回、但尚在合成队列时的事务标识。
+    private var activeCompositionID: UUID?
+    private var captureTimeoutWorkItem: DispatchWorkItem?
     private var photoProcessors = [UUID: PhotoCaptureProcessor]()
     private var notificationTokens = [NSObjectProtocol]()
+    private let photoComposer = PhotoComposer()
+    private let photoLibraryService = PhotoLibraryService()
 
     override init() {
         let multiCamSession = AVCaptureMultiCamSession()
@@ -159,25 +72,46 @@ final class DualCameraController: NSObject, ObservableObject {
 
         backPreviewLayer.videoGravity = .resizeAspectFill
         frontPreviewLayer.videoGravity = .resizeAspectFill
+        captureLayout = CameraPreferences.loadLayout()
+        captureAspectRatio = CameraPreferences.loadAspectRatio()
+        photoSaveMode = CameraPreferences.loadSaveMode()
+        captureQuality = CameraPreferences.loadQuality()
         observeSessionNotifications()
     }
 
     deinit {
         recordingTimer?.invalidate()
+        captureTimeoutWorkItem?.cancel()
         notificationTokens.forEach(NotificationCenter.default.removeObserver)
     }
 
     func start() {
+        if isFakeCamera {
+            publish(.ready)
+            publishRearCameras([.wide], selected: .wide)
+            publishDiagnostics(CameraDiagnostics(
+                deviceSummary: "Fake Camera Mode",
+                backFormat: "生成的后置占位图",
+                frontFormat: "生成的前置占位图",
+                frameRate: 30,
+                hardwareCost: 0,
+                systemPressureCost: 0
+            ))
+            return
+        }
         switch AVCaptureDevice.authorizationStatus(for: .video) {
         case .authorized:
+            CameraLog.authorization.info("相机权限已授权")
             configureAndStart()
         case .notDetermined:
             publish(.requestingAuthorization)
             AVCaptureDevice.requestAccess(for: .video) { [weak self] granted in
                 guard let self else { return }
                 if granted {
+                    CameraLog.authorization.info("用户已授权相机")
                     self.configureAndStart()
                 } else {
+                    CameraLog.authorization.error("用户拒绝相机权限")
                     self.publish(.permissionDenied)
                 }
             }
@@ -191,23 +125,36 @@ final class DualCameraController: NSObject, ObservableObject {
     func stop() {
         sessionQueue.async { [weak self] in
             guard let self else { return }
+            self.cancelActiveCapture(reason: .captureCancelled, publishNotice: false)
+            self.cancelPendingComposition()
+            guard !self.isFakeCamera else {
+                self.publish(.idle)
+                return
+            }
             if self.videoRecorder != nil {
                 self.stopRecordingLocked(restartPhotoSession: false)
             }
             guard self.session.isRunning else { return }
             self.session.stopRunning()
             self.isSessionRunning = false
+            CameraLog.lifecycle.info("双摄会话已停止")
             self.publish(.idle)
         }
     }
 
     /// 仅在没有媒体预览覆盖时恢复会话，避免预览照片／视频时仍占用双摄硬件。
     func resumePreviewIfNeeded() {
-        guard latestPhoto == nil, latestVideoURL == nil else { return }
+        guard latestPhotoSet == nil, latestVideoURL == nil else { return }
         start()
     }
 
     func capturePhoto() {
+        if isFakeCamera {
+            sessionQueue.async { [weak self] in
+                self?.captureFakePhoto()
+            }
+            return
+        }
         sessionQueue.async { [weak self] in
             guard let self else { return }
             guard self.captureMode == .photo,
@@ -215,17 +162,21 @@ final class DualCameraController: NSObject, ObservableObject {
                   self.isSessionRunning,
                   let backOutput = self.backPhotoOutput,
                   let frontOutput = self.frontPhotoOutput,
-                  self.activeCaptureID == nil,
+                  self.activeCaptureTransaction == nil,
+                  self.activeCompositionID == nil,
                   self.videoRecorder == nil else {
                 return
             }
 
             let captureID = UUID()
-            self.activeCaptureID = captureID
-            self.expectedCapturePositions = [.back, .front]
-            self.captureResults.removeAll()
-            self.captureErrors.removeAll()
+            self.activeCaptureTransaction = CaptureTransaction(
+                id: captureID,
+                startedAt: Date(),
+                expectedPositions: [.back, .front]
+            )
             self.publishCapturing(true)
+            self.scheduleCaptureTimeout(for: captureID)
+            CameraLog.capture.info("开始双路拍照事务 \(captureID.uuidString, privacy: .private)")
 
             self.capture(on: backOutput, position: .back, captureID: captureID)
             self.capture(on: frontOutput, position: .front, captureID: captureID)
@@ -263,12 +214,12 @@ final class DualCameraController: NSObject, ObservableObject {
         sessionQueue.async { [weak self] in
             guard let self else { return }
             guard self.supportedRearCameraOptions.contains(option) else {
-                self.publishMediaMessage("该后置镜头不能与前摄同时运行。")
+                self.publishNotice("该后置镜头不能与前摄同时运行。", kind: .error)
                 return
             }
             guard self.desiredRearCamera != option else { return }
-            guard self.videoRecorder == nil, self.activeCaptureID == nil else {
-                self.publishMediaMessage("请在拍照或录制完成后切换镜头。")
+            guard self.videoRecorder == nil, self.activeCaptureTransaction == nil else {
+                self.publishNotice("请在拍照或录制完成后切换镜头。", kind: .info)
                 return
             }
 
@@ -279,7 +230,7 @@ final class DualCameraController: NSObject, ObservableObject {
     }
 
     func dismissLatestPhoto() {
-        latestPhoto = nil
+        latestPhotoSet = nil
         resumePreviewIfNeeded()
     }
 
@@ -289,29 +240,92 @@ final class DualCameraController: NSObject, ObservableObject {
     }
 
     func saveLatestPhoto() {
-        guard let photo = latestPhoto,
-              let data = photo.jpegData(compressionQuality: 0.95),
-              !isSavingMedia else {
+        guard let photoSet = latestPhotoSet, !isSavingMedia else {
             return
         }
 
         isSavingMedia = true
-        requestPhotoLibraryAccess { [weak self] granted in
-            guard let self else { return }
-            guard granted else {
-                self.completeMediaSave(message: "请允许“添加照片”权限后再保存。")
-                return
+        photoLibraryService.save(photoSet, mode: photoSaveMode) { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.isSavingMedia = false
+                switch result {
+                case .success:
+                    self.latestPhotoSet = nil
+                    self.publishNotice("照片已保存到系统相册。", kind: .success)
+                    HapticService.success()
+                    self.resumePreviewIfNeeded()
+                case .failure(let error):
+                    self.publishNotice(error.localizedDescription, kind: .error)
+                    HapticService.error()
+                }
             }
+        }
+    }
 
-            PHPhotoLibrary.shared().performChanges {
-                let request = PHAssetCreationRequest.forAsset()
-                request.addResource(with: .photo, data: data, options: nil)
-            } completionHandler: { success, error in
-                self.completeMediaSave(
-                    message: success ? "照片已保存到系统相册。" : "照片保存失败：\(error?.localizedDescription ?? "未知错误")",
-                    savedPhoto: success,
-                    returnToPreview: success
-                )
+    func updateLayout(_ layout: DualCameraLayout, aspectRatio: CaptureAspectRatio) {
+        CameraPreferences.save(layout: layout)
+        CameraPreferences.save(aspectRatio: aspectRatio)
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            self.captureLayout = layout
+            self.captureAspectRatio = aspectRatio
+            self.applyMirroringSettings()
+        }
+    }
+
+    func updateSaveMode(_ mode: PhotoSaveMode) {
+        CameraPreferences.save(mode: mode)
+        sessionQueue.async { [weak self] in
+            self?.photoSaveMode = mode
+        }
+    }
+
+    func updateCaptureQuality(_ quality: CaptureQuality) {
+        CameraPreferences.save(quality: quality)
+        sessionQueue.async { [weak self] in
+            self?.captureQuality = quality
+        }
+    }
+
+    func focusAndExpose(at devicePoint: CGPoint) {
+        guard !isFakeCamera else { return }
+        sessionQueue.async { [weak self] in
+            guard let self, let backDevice = self.backDevice else { return }
+            do {
+                try backDevice.lockForConfiguration()
+                defer { backDevice.unlockForConfiguration() }
+                if backDevice.isFocusPointOfInterestSupported {
+                    backDevice.focusPointOfInterest = devicePoint
+                    backDevice.focusMode = backDevice.isFocusModeSupported(.autoFocus) ? .autoFocus : .continuousAutoFocus
+                }
+                if backDevice.isExposurePointOfInterestSupported {
+                    backDevice.exposurePointOfInterest = devicePoint
+                    backDevice.exposureMode = backDevice.isExposureModeSupported(.continuousAutoExposure)
+                        ? .continuousAutoExposure
+                        : .autoExpose
+                }
+                CameraLog.session.debug("已更新后摄对焦和测光点")
+            } catch {
+                self.publishNotice("无法设置对焦：\(error.localizedDescription)", kind: .error)
+            }
+        }
+    }
+
+    func zoomBackCamera(by scale: CGFloat) {
+        guard !isFakeCamera else { return }
+        sessionQueue.async { [weak self] in
+            guard let self, let backDevice = self.backDevice else { return }
+            do {
+                try backDevice.lockForConfiguration()
+                defer { backDevice.unlockForConfiguration() }
+                let maximum = min(backDevice.maxAvailableVideoZoomFactor, 6)
+                let requested = backDevice.videoZoomFactor * scale
+                let value = min(max(requested, backDevice.minAvailableVideoZoomFactor), maximum)
+                backDevice.videoZoomFactor = value
+                DispatchQueue.main.async { self.zoomFactor = value }
+            } catch {
+                self.publishNotice("无法调整缩放：\(error.localizedDescription)", kind: .error)
             }
         }
     }
@@ -323,7 +337,10 @@ final class DualCameraController: NSObject, ObservableObject {
         requestPhotoLibraryAccess { [weak self] granted in
             guard let self else { return }
             guard granted else {
-                self.completeMediaSave(message: "请允许“添加照片”权限后再保存。")
+                DispatchQueue.main.async {
+                    self.isSavingMedia = false
+                    self.publishNotice(CameraError.photoLibraryDenied.localizedDescription, kind: .error)
+                }
                 return
             }
 
@@ -346,7 +363,7 @@ final class DualCameraController: NSObject, ObservableObject {
             guard self.isConfigured,
                   self.isSessionRunning,
                   self.videoRecorder == nil,
-                  self.activeCaptureID == nil else {
+                  self.activeCaptureTransaction == nil else {
                 return
             }
 
@@ -388,7 +405,7 @@ final class DualCameraController: NSObject, ObservableObject {
                         self?.latestVideoURL = url
                     }
                     self?.pauseSessionForMediaPreview()
-                    self?.publishMediaMessage("视频录制完成，点击预览后可保存到相册。")
+                    self?.publishNotice("视频录制完成，点击预览后可保存到相册。", kind: .success)
                 case .failure(let error):
                     self?.publish(.failed("视频录制失败：\(error.localizedDescription)"))
                 }
@@ -405,6 +422,7 @@ final class DualCameraController: NSObject, ObservableObject {
                     try self.configureSession()
                     self.isConfigured = true
                 } catch {
+                    CameraLog.session.error("双摄会话配置失败：\(error.localizedDescription, privacy: .public)")
                     self.publish(.unsupported(error.localizedDescription))
                     return
                 }
@@ -418,6 +436,8 @@ final class DualCameraController: NSObject, ObservableObject {
 
             self.session.startRunning()
             self.isSessionRunning = true
+            self.publishDiagnostics(self.makeDiagnostics())
+            CameraLog.lifecycle.info("双摄会话已启动，硬件成本 \(self.session.hardwareCost, privacy: .public)")
             self.publish(.ready)
         }
     }
@@ -436,6 +456,7 @@ final class DualCameraController: NSObject, ObservableObject {
             isConfigured = true
             session.startRunning()
             isSessionRunning = true
+            publishDiagnostics(makeDiagnostics())
             publish(.ready)
             return true
         } catch {
@@ -457,6 +478,9 @@ final class DualCameraController: NSObject, ObservableObject {
         frontVideoOutput = nil
         audioOutput = nil
         latestFrontSampleBuffer = nil
+        frontPreviewConnection = nil
+        frontPhotoConnection = nil
+        backDevice = nil
     }
 
     private func configureSession() throws {
@@ -467,6 +491,7 @@ final class DualCameraController: NSObject, ObservableObject {
         let cameras = try selectSupportedCameraPair()
         try configureMultiCamFormat(for: cameras.back)
         try configureMultiCamFormat(for: cameras.front)
+        backDevice = cameras.back
 
         session.beginConfiguration()
         defer { session.commitConfiguration() }
@@ -500,7 +525,8 @@ final class DualCameraController: NSObject, ObservableObject {
         try addConnection(backPreviewConnection, label: "后置预览")
         try addConnection(frontPreviewConnection, label: "前置预览")
         configurePortraitConnection(backPreviewConnection, mirrored: false)
-        configurePortraitConnection(frontPreviewConnection, mirrored: true)
+        configurePortraitConnection(frontPreviewConnection, mirrored: captureLayout.frontPreviewMirrored)
+        self.frontPreviewConnection = frontPreviewConnection
 
         switch captureMode {
         case .photo:
@@ -528,10 +554,11 @@ final class DualCameraController: NSObject, ObservableObject {
         try addConnection(backConnection, label: "后置照片输出")
         try addConnection(frontConnection, label: "前置照片输出")
         configurePortraitConnection(backConnection, mirrored: false)
-        configurePortraitConnection(frontConnection, mirrored: true)
+        configurePortraitConnection(frontConnection, mirrored: captureLayout.frontCaptureMirrored)
 
         backPhotoOutput = backOutput
         frontPhotoOutput = frontOutput
+        frontPhotoConnection = frontConnection
     }
 
     private func configureVideoOutputs(
@@ -655,27 +682,19 @@ final class DualCameraController: NSObject, ObservableObject {
     }
 
     private func configureMultiCamFormat(for device: AVCaptureDevice) throws {
-        let multiCamFormats = device.formats.filter { format in
-            format.isMultiCamSupported && supportsThirtyFramesPerSecond(format)
+        let targetFrameRates: [Double] = [30, 24]
+        guard let selected = targetFrameRates.lazy.compactMap({ frameRate in
+            self.selectBestFormat(for: device, targetFrameRate: frameRate).map { ($0, frameRate) }
+        }).first else {
+            throw CameraConfigurationError("\(device.localizedName) 没有可用于双摄的 24fps 及以上格式。")
         }
-
-        guard !multiCamFormats.isEmpty else {
-            throw CameraConfigurationError("\(device.localizedName) 没有可用于双摄的 30fps 格式。")
-        }
-
-        let preferredFormats = multiCamFormats.filter { format in
-            let dimensions = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
-            return dimensions.width >= 1_280 && dimensions.height >= 720
-        }
-        let selectedFormat = (preferredFormats.isEmpty ? multiCamFormats : preferredFormats)
-            .min { pixelCount($0) < pixelCount($1) }!
 
         do {
             try device.lockForConfiguration()
             defer { device.unlockForConfiguration() }
-            device.activeFormat = selectedFormat
+            device.activeFormat = selected.0
 
-            let duration = CMTime(value: 1, timescale: 30)
+            let duration = CMTime(value: 1, timescale: CMTimeScale(selected.1.rounded()))
             device.activeVideoMinFrameDuration = duration
             device.activeVideoMaxFrameDuration = duration
         } catch {
@@ -683,10 +702,26 @@ final class DualCameraController: NSObject, ObservableObject {
         }
     }
 
-    private func supportsThirtyFramesPerSecond(_ format: AVCaptureDevice.Format) -> Bool {
-        format.videoSupportedFrameRateRanges.contains {
-            $0.minFrameRate <= 30 && $0.maxFrameRate >= 30
+    /// 优先稳定帧率和接近 720p 的低成本格式；30fps 不可用时才降到 24fps。
+    private func selectBestFormat(for device: AVCaptureDevice, targetFrameRate: Double) -> AVCaptureDevice.Format? {
+        let targetPixels: Int32 = 1_280 * 720
+        let candidates = device.formats.filter { format in
+            format.isMultiCamSupported && format.videoSupportedFrameRateRanges.contains {
+                $0.minFrameRate <= targetFrameRate && $0.maxFrameRate >= targetFrameRate
+            }
         }
+        return candidates.min { lhs, rhs in
+            formatScore(lhs, targetPixels: targetPixels) < formatScore(rhs, targetPixels: targetPixels)
+        }
+    }
+
+    private func formatScore(_ format: AVCaptureDevice.Format, targetPixels: Int32) -> Int64 {
+        let pixels = pixelCount(format)
+        let resolutionPenalty = pixels < targetPixels
+            ? Int64(targetPixels - pixels) * 4
+            : Int64(pixels - targetPixels)
+        let highResolutionPenalty = pixels > targetPixels * 3 ? Int64(pixels - targetPixels * 3) : 0
+        return resolutionPenalty + highResolutionPenalty
     }
 
     private func pixelCount(_ format: AVCaptureDevice.Format) -> Int32 {
@@ -726,6 +761,35 @@ final class DualCameraController: NSObject, ObservableObject {
         }
     }
 
+    private func applyMirroringSettings() {
+        if let frontPreviewConnection {
+            configurePortraitConnection(frontPreviewConnection, mirrored: captureLayout.frontPreviewMirrored)
+        }
+        if let frontPhotoConnection {
+            configurePortraitConnection(frontPhotoConnection, mirrored: captureLayout.frontCaptureMirrored)
+        }
+    }
+
+    private func makeDiagnostics() -> CameraDiagnostics {
+        let frontDevice = session.inputs
+            .compactMap { ($0 as? AVCaptureDeviceInput)?.device }
+            .first(where: { $0.position == .front })
+        return CameraDiagnostics(
+            deviceSummary: "\(backDevice?.localizedName ?? "后摄") + \(frontDevice?.localizedName ?? "前摄")",
+            backFormat: formatSummary(backDevice),
+            frontFormat: formatSummary(frontDevice),
+            frameRate: backDevice.map { 1 / CMTimeGetSeconds($0.activeVideoMinFrameDuration) } ?? 0,
+            hardwareCost: session.hardwareCost,
+            systemPressureCost: session.systemPressureCost
+        )
+    }
+
+    private func formatSummary(_ device: AVCaptureDevice?) -> String {
+        guard let device else { return "—" }
+        let dimensions = CMVideoFormatDescriptionGetDimensions(device.activeFormat.formatDescription)
+        return "\(dimensions.width)×\(dimensions.height)"
+    }
+
     private func capture(
         on output: AVCapturePhotoOutput,
         position: AVCaptureDevice.Position,
@@ -735,7 +799,7 @@ final class DualCameraController: NSObject, ObservableObject {
         let settings = AVCapturePhotoSettings()
         // MultiCam 会为各输出分别限制可用的拍照质量；不得请求高于该上限的值，
         // 否则 AVCapturePhotoOutput 会抛出 Objective-C 异常并终止应用。
-        settings.photoQualityPrioritization = output.maxPhotoQualityPrioritization
+        settings.photoQualityPrioritization = captureQuality == .fast ? .speed : output.maxPhotoQualityPrioritization
 
         let processor = PhotoCaptureProcessor { [weak self] image, errorMessage in
             self?.sessionQueue.async {
@@ -761,94 +825,174 @@ final class DualCameraController: NSObject, ObservableObject {
         errorMessage: String?
     ) {
         photoProcessors[processorID] = nil
-        guard activeCaptureID == captureID else { return }
+        guard var transaction = activeCaptureTransaction, transaction.id == captureID else {
+            CameraLog.capture.debug("忽略过期拍照回调")
+            return
+        }
 
         if let image {
-            captureResults[position] = image.normalized
-        } else if let errorMessage {
-            captureErrors.append("\(position == .front ? "前置" : "后置")拍照失败：\(errorMessage)")
-        }
-
-        expectedCapturePositions.remove(position)
-        guard expectedCapturePositions.isEmpty else { return }
-
-        activeCaptureID = nil
-        publishCapturing(false)
-
-        guard captureErrors.isEmpty else {
-            publish(.failed(captureErrors.joined(separator: "\n")))
-            return
-        }
-
-        guard let composedPhoto = composePhoto(
-            back: captureResults[.back],
-            front: captureResults[.front]
-        ) else {
-            publish(.failed("未能同时取得前后摄像头照片，请稍后重试。"))
-            return
-        }
-
-        DispatchQueue.main.async { [weak self] in
-            self?.latestPhoto = composedPhoto
-        }
-        pauseSessionForMediaPreview()
-        publishMediaMessage("照片已生成，预览后可保存到相册。")
-    }
-
-    private func composePhoto(back: UIImage?, front: UIImage?) -> UIImage? {
-        guard let back, let front else { return nil }
-
-        let canvasSize = CGSize(width: 1_080, height: 1_440)
-        let renderer = UIGraphicsImageRenderer(size: canvasSize)
-        return renderer.image { context in
-            UIColor.black.setFill()
-            context.fill(CGRect(origin: .zero, size: canvasSize))
-
-            let backgroundRect = CGRect(origin: .zero, size: canvasSize)
-            drawAspectFill(back, in: backgroundRect, context: context)
-
-            let inset: CGFloat = 48
-            let pipRect = CGRect(
-                x: canvasSize.width - 360 - inset,
-                y: canvasSize.height - 480 - inset,
-                width: 360,
-                height: 480
+            transaction.receivedImages[position] = image.dualCameraNormalized
+        } else {
+            transaction.errors[position] = .captureFailed(
+                "\(position == .front ? "前置" : "后置")拍照失败：\(errorMessage ?? "未返回照片数据")"
             )
-            context.cgContext.saveGState()
-            UIBezierPath(roundedRect: pipRect, cornerRadius: 30).addClip()
-            drawAspectFill(front, in: pipRect, context: context)
-            context.cgContext.restoreGState()
-
-            UIColor.white.withAlphaComponent(0.9).setStroke()
-            let border = UIBezierPath(roundedRect: pipRect, cornerRadius: 30)
-            border.lineWidth = 7
-            border.stroke()
         }
-    }
+        activeCaptureTransaction = transaction
+        guard transaction.isComplete else { return }
 
-    private func drawAspectFill(
-        _ image: UIImage,
-        in rect: CGRect,
-        context: UIGraphicsImageRendererContext
-    ) {
-        let scale = max(rect.width / image.size.width, rect.height / image.size.height)
-        let size = CGSize(width: image.size.width * scale, height: image.size.height * scale)
-        let imageRect = CGRect(
-            x: rect.midX - size.width / 2,
-            y: rect.midY - size.height / 2,
-            width: size.width,
-            height: size.height
-        )
+        captureTimeoutWorkItem?.cancel()
+        captureTimeoutWorkItem = nil
+        activeCaptureTransaction = nil
 
-        context.cgContext.saveGState()
-        context.cgContext.clip(to: rect)
-        image.draw(in: imageRect)
-        context.cgContext.restoreGState()
+        guard transaction.errors.isEmpty else {
+            publishCapturing(false)
+            publishNotice(transaction.errors.values.map(\.localizedDescription).joined(separator: "\n"), kind: .error)
+            CameraLog.capture.error("双路拍照事务返回错误")
+            return
+        }
+        guard let backImage = transaction.receivedImages[.back],
+              let frontImage = transaction.receivedImages[.front] else {
+            publishCapturing(false)
+            publishNotice(CameraError.captureFailed("未能同时取得前后摄照片。").localizedDescription, kind: .error)
+            return
+        }
+
+        let layout = captureLayout
+        let aspectRatio = captureAspectRatio
+        activeCompositionID = transaction.id
+        pauseSessionForMediaPreview()
+        photoComposer.compose(
+            backImage: backImage,
+            frontImage: frontImage,
+            layout: layout,
+            aspectRatio: aspectRatio
+        ) { [weak self] result in
+            guard let self else { return }
+            self.sessionQueue.async {
+                guard self.activeCompositionID == transaction.id else {
+                    CameraLog.composition.debug("忽略已取消的照片合成结果")
+                    return
+                }
+                self.activeCompositionID = nil
+                self.publishCapturing(false)
+                switch result {
+                case .success(let composedImage):
+                    let photoSet = CapturedPhotoSet(
+                        id: transaction.id,
+                        capturedAt: transaction.startedAt,
+                        backImage: backImage,
+                        frontImage: frontImage,
+                        composedImage: composedImage,
+                        layout: layout,
+                        aspectRatio: aspectRatio
+                    )
+                    DispatchQueue.main.async {
+                        self.latestPhotoSet = photoSet
+                        self.publishNotice("照片已生成，可保存或分享。", kind: .success)
+                        HapticService.shutter()
+                    }
+                    CameraLog.composition.info("双摄照片合成完成")
+                case .failure(let error):
+                    self.publishNotice(error.localizedDescription, kind: .error)
+                    self.resumePreviewIfNeeded()
+                }
+            }
+        }
     }
 
     private func makeVideoURL() -> URL {
         let directory = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
         return directory.appendingPathComponent("DualCamera-\(UUID().uuidString).mov")
+    }
+
+    private func scheduleCaptureTimeout(for captureID: UUID) {
+        captureTimeoutWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self,
+                  self.activeCaptureTransaction?.id == captureID else { return }
+            self.cancelActiveCapture(reason: .captureTimedOut, publishNotice: true)
+        }
+        captureTimeoutWorkItem = workItem
+        sessionQueue.asyncAfter(deadline: .now() + 4, execute: workItem)
+    }
+
+    /// 取消只影响当前事务；后续到达的 PhotoOutput 回调会因事务 ID 不匹配而被忽略。
+    private func cancelActiveCapture(reason: CameraError, publishNotice: Bool) {
+        guard activeCaptureTransaction != nil else { return }
+        activeCaptureTransaction = nil
+        captureTimeoutWorkItem?.cancel()
+        captureTimeoutWorkItem = nil
+        photoProcessors.removeAll()
+        publishCapturing(false)
+        if publishNotice {
+            self.publishNotice(reason.localizedDescription, kind: .error)
+        }
+        CameraLog.capture.error("拍照事务已取消：\(reason.localizedDescription, privacy: .public)")
+    }
+
+    /// 取消不会强杀正在运行的绘制任务，但其结果不会再进入 UI 或相册流程。
+    private func cancelPendingComposition() {
+        guard activeCompositionID != nil else { return }
+        activeCompositionID = nil
+        publishCapturing(false)
+        CameraLog.composition.info("照片合成结果已取消")
+    }
+
+    private func captureFakePhoto() {
+        guard activeCompositionID == nil else { return }
+        publishCapturing(true)
+        let layout = captureLayout
+        let aspectRatio = captureAspectRatio
+        let transactionID = UUID()
+        activeCompositionID = transactionID
+        let capturedAt = Date()
+        let back = fakeImage(color: .systemTeal, label: "BACK")
+        let front = fakeImage(color: .systemOrange, label: "FRONT")
+        photoComposer.compose(backImage: back, frontImage: front, layout: layout, aspectRatio: aspectRatio) { [weak self] result in
+            guard let self else { return }
+            self.sessionQueue.async {
+                guard self.activeCompositionID == transactionID else { return }
+                self.activeCompositionID = nil
+                self.publishCapturing(false)
+                switch result {
+                case .success(let image):
+                    let photoSet = CapturedPhotoSet(
+                        id: transactionID,
+                        capturedAt: capturedAt,
+                        backImage: back,
+                        frontImage: front,
+                        composedImage: image,
+                        layout: layout,
+                        aspectRatio: aspectRatio
+                    )
+                    DispatchQueue.main.async {
+                        self.latestPhotoSet = photoSet
+                        self.publishNotice("Fake Camera 已生成照片。", kind: .success)
+                    }
+                case .failure(let error):
+                    self.publishNotice(error.localizedDescription, kind: .error)
+                }
+            }
+        }
+    }
+
+    private func fakeImage(color: UIColor, label: String) -> UIImage {
+        let size = CGSize(width: 720, height: 1_280)
+        return UIGraphicsImageRenderer(size: size).image { context in
+            color.setFill()
+            context.fill(CGRect(origin: .zero, size: size))
+            UIColor.white.withAlphaComponent(0.86).setFill()
+            let attributes: [NSAttributedString.Key: Any] = [
+                .font: UIFont.monospacedSystemFont(ofSize: 54, weight: .bold),
+                .foregroundColor: UIColor.white
+            ]
+            let text = NSString(string: label)
+            let textSize = text.size(withAttributes: attributes)
+            text.draw(
+                at: CGPoint(x: (size.width - textSize.width) / 2, y: (size.height - textSize.height) / 2),
+                withAttributes: attributes
+            )
+        }
     }
 
     private func requestPhotoLibraryAccess(completion: @escaping (Bool) -> Void) {
@@ -869,20 +1013,16 @@ final class DualCameraController: NSObject, ObservableObject {
 
     private func completeMediaSave(
         message: String,
-        savedPhoto: Bool = false,
         savedVideo: Bool = false,
         returnToPreview: Bool = false
     ) {
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.isSavingMedia = false
-            if savedPhoto {
-                self.latestPhoto = nil
-            }
             if savedVideo {
                 self.latestVideoURL = nil
             }
-            self.publishMediaMessage(message)
+            self.publishNotice(message, kind: .success)
             if returnToPreview {
                 self.resumePreviewIfNeeded()
             }
@@ -914,8 +1054,14 @@ final class DualCameraController: NSObject, ObservableObject {
                 object: session,
                 queue: .main
             ) { [weak self] _ in
+                self?.sessionQueue.async {
+                    self?.cancelActiveCapture(reason: .interrupted, publishNotice: false)
+                    self?.cancelPendingComposition()
+                }
                 self?.stopRecording()
-                self?.publish(.failed("双摄会话被系统中断，等待恢复。"))
+                self?.publish(.idle)
+                self?.publishNotice(CameraError.interrupted.localizedDescription, kind: .error)
+                CameraLog.interruption.notice("双摄会话被系统中断")
             }
         )
         notificationTokens.append(
@@ -924,7 +1070,8 @@ final class DualCameraController: NSObject, ObservableObject {
                 object: session,
                 queue: .main
             ) { [weak self] _ in
-                self?.configureAndStart()
+                CameraLog.interruption.info("双摄会话中断结束，尝试恢复")
+                self?.resumePreviewIfNeeded()
             }
         )
     }
@@ -932,10 +1079,18 @@ final class DualCameraController: NSObject, ObservableObject {
     private func handleRuntimeError(_ notification: Notification) {
         let error = notification.userInfo?[AVCaptureSessionErrorKey] as? AVError
         if error?.code == .mediaServicesWereReset {
-            configureAndStart()
+            sessionQueue.async { [weak self] in
+                guard let self else { return }
+                self.cancelActiveCapture(reason: .captureCancelled, publishNotice: false)
+                self.cancelPendingComposition()
+                self.tearDownSession()
+                self.isConfigured = false
+                self.configureAndStart()
+            }
         } else {
             stopRecording()
             publish(.failed("双摄会话发生运行时错误：\(error?.localizedDescription ?? "未知错误")"))
+            CameraLog.session.error("双摄会话运行时错误：\(error?.localizedDescription ?? "未知错误", privacy: .public)")
         }
     }
 
@@ -983,18 +1138,25 @@ final class DualCameraController: NSObject, ObservableObject {
         }
     }
 
-    private func publishMediaMessage(_ message: String) {
+    private func publishDiagnostics(_ newValue: CameraDiagnostics) {
         DispatchQueue.main.async { [weak self] in
-            self?.mediaMessage = message
+            self?.diagnostics = newValue
+        }
+    }
+
+    private func publishNotice(_ message: String, kind: CameraNoticeKind) {
+        DispatchQueue.main.async { [weak self] in
+            let notice = CameraNotice(message: message, kind: kind)
+            self?.notice = notice
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-                guard self?.mediaMessage == message else { return }
-                self?.mediaMessage = nil
+                guard self?.notice == notice else { return }
+                self?.notice = nil
             }
         }
     }
 }
 
-extension DualCameraController: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
+extension MultiCamSessionController: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
     func captureOutput(
         _ output: AVCaptureOutput,
         didOutput sampleBuffer: CMSampleBuffer,
@@ -1051,16 +1213,5 @@ private struct CameraConfigurationError: LocalizedError {
 
     var errorDescription: String? {
         message
-    }
-}
-
-private extension UIImage {
-    var normalized: UIImage {
-        guard imageOrientation != .up else { return self }
-
-        let renderer = UIGraphicsImageRenderer(size: size)
-        return renderer.image { _ in
-            draw(in: CGRect(origin: .zero, size: size))
-        }
     }
 }

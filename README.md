@@ -1,96 +1,65 @@
 # 双摄相机（DualCamera）
 
-一个原生 SwiftUI iPhone 相机示例：通过 `AVCaptureMultiCamSession` 同时启用前置摄像头和后置摄像头，为 iPhone 16 Pro 提供双摄实时预览、画中画拍照与视频录制。
+面向 iPhone 16 Pro 等支持 `AVCaptureMultiCamSession` 的设备的原生 SwiftUI 双摄相机。它同时请求前后摄照片，将两路图像按同一布局规则合成为照片；并保留已有的视频录制能力。
 
-> 不按“iPhone 17 专属功能”处理。应用会依据设备实际能力启用 MultiCam，因此 iPhone 16 Pro 只要系统允许该前后摄组合，便可直接使用。
+> 双路照片是“近同步”采集：两个 `AVCapturePhotoOutput` 在同一个事务中并发请求，但 iOS 不提供严格同一时刻曝光的公开 API。
 
-## 功能
+## 当前能力
 
-- 原创双镜头 App Icon，已接入 iOS Asset Catalog
-- 后置全屏预览，前置镜像画中画预览
-- 后置超广角／广角／长焦选择；仅显示系统确认可与前摄并发的镜头
-- 一次快门同时请求前后摄照片，合成为一张画中画照片；保存成功后自动返回实时预览并提示
-- 前后摄画中画视频录制、麦克风录音、视频预览与手动保存到系统相册；保存成功后自动继续拍摄
-- 检查相机／麦克风授权、MultiCam 支持、可并发的摄像头组合及 30fps 兼容格式
-- 显示系统中断、媒体服务重置等运行时问题，不会伪装成单摄模式
+- 前后摄实时预览、后置超广角／广角／长焦动态筛选
+- 画中画、左右分屏、上下分屏；预览与成片共用布局引擎
+- 画中画拖动、角落吸附、小／中／大尺寸与布局持久化
+- 合成照片预览、系统分享、仅保存成片或同时保存前后摄原图
+- 后摄点击对焦／测光、双指缩放、九宫格、3／5／10 秒倒计时、快门触感反馈
+- 前摄预览镜像与成片镜像可分别设置
+- 拍照事务 ID、4 秒超时、会话中断／媒体服务重置恢复及硬件成本诊断
+- 已有的前后摄画中画视频录制、预览与保存（本轮未扩展其规格）
 
-## 系统要求
+## 要求与运行
 
 | 项目 | 要求 |
 | --- | --- |
-| Xcode | Xcode 15 或更高版本 |
 | 最低系统 | iOS 17.0 |
-| 验证设备 | iPhone 16 Pro（或其他 `AVCaptureMultiCamSession` 支持设备） |
-| 模拟器 | 可编译界面，但不能验证双摄硬件 |
+| 真机 | 支持 `AVCaptureMultiCamSession` 的 iPhone；以 iPhone 16 Pro 为目标机型 |
+| Xcode | Xcode 15 或更高版本 |
+| 模拟器 | 可运行 Fake Camera Mode 与单元测试；不能验证真实双摄硬件 |
 
-## 快速开始
+1. 用 Xcode 打开 `DualCamera.xcodeproj`。
+2. 选择 **DualCamera target → Signing & Capabilities**，填入自己的 Development Team 和唯一 Bundle Identifier。
+3. 连接 iPhone，选择设备并 Run；首次按需允许相机、麦克风和“添加照片”权限。
+4. 使用顶部菜单选择镜头、布局、比例及设置；点击白色快门进入合成照片预览。
 
-1. 克隆仓库并用 Xcode 打开 `DualCamera.xcodeproj`。
-2. 在 **Signing & Capabilities** 为 `DualCamera` 选择自己的 Development Team 和唯一的 Bundle Identifier。
-3. 选择已连接的 iPhone 16 Pro，点击 Run。
-4. 首次启动时授予相机权限。后置画面应填满屏幕，前置画面应出现在右下角。
-5. 在顶部菜单选择可用的后置镜头；不可与前摄同时运行的镜头不会显示。
-6. 点击白色快门，确认应用内预览中包含两路照片；点击“保存并继续拍摄”写入系统相册后，应用自动回到双摄预览。
-7. 点击右侧红点开始视频录制。首次录制时授予麦克风权限；点击中央停止键后可预览并保存视频。
+工程不包含个人 Team ID，默认 Bundle Identifier 为 `com.yourcompany.dualcamera`，安装前必须由开发者配置。
 
-完整的配置、功能验收与故障排查请参阅 [使用说明](docs/使用说明.md)。
-
-从 Apple 账号申请、项目签名、真机安装、IPA 打包、TestFlight 到 App Store 发布，请参阅 [iOS 应用开发、打包与发布全流程指南](docs/iOS应用开发、打包与发布全流程指南.md)。
-
-## 实现概览
-
-`DualCameraController` 使用手动连接而非 AVCaptureSession 自动路由，并按拍照／视频模式切换输出，控制 MultiCam 硬件带宽：
-
-```text
-后置广角 input ──┬── 后置预览层
-                 └── 后置 PhotoOutput
-
-前置 TrueDepth input ──┬── 前置预览层（镜像）
-                       └── 前置 PhotoOutput（镜像）
-
-视频模式：
-
-后置 VideoDataOutput ─┐
-前置 VideoDataOutput ─┼── Core Image 画中画合成 ── AVAssetWriter（H.264）
-麦克风 AudioDataOutput ─┘                              └── AAC 音频
-```
-
-启动时，应用依次验证 `AVCaptureMultiCamSession.isMultiCamSupported`、
-`supportedMultiCamDeviceSets` 和每个设备的 `isMultiCamSupported` 格式，再以可持续运行的 720p+ / 30fps 格式启动会话。录制时会从照片输出切换为视频／音频输出，避免同时常驻两套高带宽媒体输出。该流程避免在 iPhone 16 Pro 上因为错误使用虚拟后摄或高带宽格式而导致会话无法启动。
-
-## 本地验证
+## 验证命令
 
 ```sh
-# Swift API 与类型校验
-xcrun swiftc -sdk "$(xcrun --sdk iphoneos --show-sdk-path)" \
-  -target arm64-apple-ios17.0 -typecheck DualCamera/*.swift
-
-# 权限和应用配置校验
-plutil -lint DualCamera/Info.plist
-
-# 生成 Xcode 工程（已安装 XcodeGen 时）
 xcodegen generate
-
-# 完整设备 SDK 构建
+xcodebuild test -project DualCamera.xcodeproj -scheme DualCamera \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5' \
+  CODE_SIGNING_ALLOWED=NO
 xcodebuild -project DualCamera.xcodeproj -scheme DualCamera \
   -sdk iphoneos -configuration Debug CODE_SIGNING_ALLOWED=NO build
 ```
 
-本工作区已通过 Swift 类型检查、`Info.plist` 校验、工程生成和 iPhoneOS 设备 SDK 完整构建。为解决初始的 Xcode 平台组件缺失，已安装 iOS 26.5 Simulator（arm64）；随后以上 iPhoneOS 构建命令获得 `BUILD SUCCEEDED`。真机验收仍应覆盖两个预览、连续快门、锁屏/切后台恢复和高温/系统中断提示。
+在 Scheme 的 Run Arguments 加入 `-fakeCamera`，可在没有真实双摄硬件的环境中检查布局、快门和照片预览流程。完整真机结果以 [真机验收清单](docs/真机验收.md) 为准。
+
+## 文档
+
+- [使用说明](docs/使用说明.md)：日常操作、权限与故障排查
+- [架构说明](docs/architecture.md)：职责、并发、布局与恢复策略
+- [真机验收](docs/真机验收.md)：iPhone 16 Pro 的待执行检查项
+- [路线图](docs/roadmap.md)：范围边界与后续方向
+- [变更记录](CHANGELOG.md)
+- [iOS 应用开发、打包与发布全流程指南](docs/iOS应用开发、打包与发布全流程指南.md)
 
 ## 隐私
 
-本应用请求相机权限用于双摄预览与拍照，麦克风权限用于视频录音，“添加照片”权限仅在你点击保存照片或视频时使用。应用不会自动写入相册，也不会上传、分析或传输相机数据。
+相机用于本地预览与拍照；麦克风仅用于已有的视频录音；“添加照片”权限仅在用户明确点击保存时使用。应用不自动写入相册，也不上传或分析相机内容。
 
-## 项目结构
+## 已知限制
 
-```text
-DualCamera/
-├── ContentView.swift             # SwiftUI 交互界面
-├── DualCameraController.swift    # MultiCam 会话、拍照/录像模式、状态与保存
-├── DualCameraPreview.swift       # 双预览层布局
-├── DualCameraVideoRecorder.swift # 画中画视频合成、H.264/AAC 写入
-├── Assets.xcassets               # App Icon 资源集
-└── Info.plist                    # 相机、麦克风、相册权限说明
-docs/使用说明.md                    # 配置和真机验收手册
-```
+- 不支持 MultiCam 的设备会显示不支持状态，不会降级为伪双摄。
+- 系统会依据并发组合、温度、通话或其他占用动态限制后置镜头；菜单只显示当前系统确认可用的组合。
+- 画中画位置与比例可持久化，但不同设备和系统版本的真实取景裁切仍须按验收清单确认。
+- 目前没有新增视频布局、视频倒计时或直播能力；视频功能保留为实验性已有能力。
