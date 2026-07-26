@@ -6,7 +6,8 @@ options:
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    PRODUCT_BUNDLE_IDENTIFIER: com.example.dualcamera
+    PRODUCT_BUNDLE_IDENTIFIER: com.taoking.dualcamera
+    DEVELOPMENT_TEAM: 2R72D4LP5P
 targets:
   DualCamera:
     type: application

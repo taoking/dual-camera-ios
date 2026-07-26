@@ -9,13 +9,17 @@
 /* Begin PBXBuildFile section */
 		3D197089C32632806E00B118 /* DualCameraApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 925276506C9953015EB69BF8 /* DualCameraApp.swift */; };
 		54C61ABACD2F8D12C4DD0679 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4401FC3062119276335576A9 /* ContentView.swift */; };
+		937B23842B4D907E1EDFA61F /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 32C8E457A170C8B703CF0D7D /* Assets.xcassets */; };
 		C677965E2015F073414FD15E /* DualCameraPreview.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3615AEB91AFBB5E45C8D0D8 /* DualCameraPreview.swift */; };
+		D4AE42199093954300738480 /* DualCameraVideoRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FB4C6FA450F1DF9710B5A01 /* DualCameraVideoRecorder.swift */; };
 		FB52F51DA067216A5915C4E7 /* DualCameraController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1489F65E6A1F6C943C0BB182 /* DualCameraController.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		0FB4C6FA450F1DF9710B5A01 /* DualCameraVideoRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DualCameraVideoRecorder.swift; sourceTree = "<group>"; };
 		1489F65E6A1F6C943C0BB182 /* DualCameraController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DualCameraController.swift; sourceTree = "<group>"; };
 		2DF314B0155FCE7E9472E3D7 /* DualCamera.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = DualCamera.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		32C8E457A170C8B703CF0D7D /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		4401FC3062119276335576A9 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		8B13C6245885C2BDBF07689C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		925276506C9953015EB69BF8 /* DualCameraApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DualCameraApp.swift; sourceTree = "<group>"; };
@@ -42,10 +46,12 @@
 		E8C66B7CDC49BC085A13409A /* DualCamera */ = {
 			isa = PBXGroup;
 			children = (
+				32C8E457A170C8B703CF0D7D /* Assets.xcassets */,
 				4401FC3062119276335576A9 /* ContentView.swift */,
 				925276506C9953015EB69BF8 /* DualCameraApp.swift */,
 				1489F65E6A1F6C943C0BB182 /* DualCameraController.swift */,
 				A3615AEB91AFBB5E45C8D0D8 /* DualCameraPreview.swift */,
+				0FB4C6FA450F1DF9710B5A01 /* DualCameraVideoRecorder.swift */,
 				8B13C6245885C2BDBF07689C /* Info.plist */,
 			);
 			path = DualCamera;
@@ -59,6 +65,7 @@
 			buildConfigurationList = CF2F343C70317B0AF1FF713F /* Build configuration list for PBXNativeTarget "DualCamera" */;
 			buildPhases = (
 				68B626F4A851CA59197F393B /* Sources */,
+				E127ADFB973563737A081FC8 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -80,6 +87,9 @@
 				BuildIndependentTargetsInParallel = YES;
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
+					18C43495325BC0B0A11BFF86 = {
+						DevelopmentTeam = 2R72D4LP5P;
+					};
 				};
 			};
 			buildConfigurationList = 2262D91CAD9DB590DC59E93B /* Build configuration list for PBXProject "DualCamera" */;
@@ -101,6 +111,17 @@
 		};
 /* End PBXProject section */
 
+/* Begin PBXResourcesBuildPhase section */
+		E127ADFB973563737A081FC8 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				937B23842B4D907E1EDFA61F /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		68B626F4A851CA59197F393B /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -110,6 +131,7 @@
 				3D197089C32632806E00B118 /* DualCameraApp.swift in Sources */,
 				FB52F51DA067216A5915C4E7 /* DualCameraController.swift in Sources */,
 				C677965E2015F073414FD15E /* DualCameraPreview.swift in Sources */,
+				D4AE42199093954300738480 /* DualCameraVideoRecorder.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -151,6 +173,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = dwarf;
+				DEVELOPMENT_TEAM = 2R72D4LP5P;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -171,7 +194,7 @@
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.dualcamera;
+				PRODUCT_BUNDLE_IDENTIFIER = com.taoking.dualcamera;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
@@ -215,6 +238,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				COPY_PHASE_STRIP = NO;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				DEVELOPMENT_TEAM = 2R72D4LP5P;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -228,7 +252,7 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
-				PRODUCT_BUNDLE_IDENTIFIER = com.example.dualcamera;
+				PRODUCT_BUNDLE_IDENTIFIER = com.taoking.dualcamera;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
 				SWIFT_COMPILATION_MODE = wholemodule;
