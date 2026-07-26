@@ -44,7 +44,7 @@ final class PhotoComposer {
         let image = renderer.image { context in
             UIColor.black.setFill()
             context.fill(CGRect(origin: .zero, size: outputSize))
-            drawAspectFill(backImage, in: frames.back, context: context)
+            drawAspectFill(backImage, in: frames.back, mirrored: false, context: context)
 
             context.cgContext.saveGState()
             if layout.style == .pictureInPicture {
@@ -53,7 +53,12 @@ final class PhotoComposer {
             } else {
                 context.cgContext.clip(to: frames.front)
             }
-            drawAspectFill(frontImage, in: frames.front, context: context)
+            drawAspectFill(
+                frontImage,
+                in: frames.front,
+                mirrored: layout.frontCaptureMirrored,
+                context: context
+            )
             context.cgContext.restoreGState()
 
             UIColor.white.withAlphaComponent(0.9).setStroke()
@@ -70,6 +75,7 @@ final class PhotoComposer {
     private static func drawAspectFill(
         _ image: UIImage,
         in rect: CGRect,
+        mirrored: Bool,
         context: UIGraphicsImageRendererContext
     ) {
         let scale = max(rect.width / image.size.width, rect.height / image.size.height)
@@ -82,6 +88,10 @@ final class PhotoComposer {
         )
         context.cgContext.saveGState()
         context.cgContext.clip(to: rect)
+        if mirrored {
+            context.cgContext.translateBy(x: rect.midX * 2, y: 0)
+            context.cgContext.scaleBy(x: -1, y: 1)
+        }
         image.draw(in: imageRect)
         context.cgContext.restoreGState()
     }

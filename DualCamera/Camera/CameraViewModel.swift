@@ -21,6 +21,7 @@ final class CameraViewModel: ObservableObject {
     @Published private(set) var zoomFactor: CGFloat = 1
     @Published private(set) var isFakeCamera = false
     @Published var showsPhotoPermissionSettings = false
+    @Published private(set) var settingsAlertMessage = "请在系统设置中允许所需权限，然后重试。"
 
     @Published private(set) var layout: DualCameraLayout
     @Published private(set) var aspectRatio: CaptureAspectRatio
@@ -32,16 +33,22 @@ final class CameraViewModel: ObservableObject {
     private var cancellables = Set<AnyCancellable>()
     private var countdownTask: Task<Void, Never>?
     private var timerSeconds: Int
+    private let preferences: CameraPreferences
 
-    init() {
-        layout = CameraPreferences.loadLayout()
-        aspectRatio = CameraPreferences.loadAspectRatio()
-        saveMode = CameraPreferences.loadSaveMode()
-        captureQuality = CameraPreferences.loadQuality()
-        gridEnabled = CameraPreferences.gridEnabled
-        timerSeconds = CameraPreferences.timerSeconds
+    init(preferences: CameraPreferences = CameraPreferences()) {
+        self.preferences = preferences
+        if ProcessInfo.processInfo.arguments.contains("-resetCameraPreferences") {
+            preferences.resetForUITesting()
+        }
+        layout = preferences.loadLayout()
+        aspectRatio = preferences.loadAspectRatio()
+        saveMode = preferences.loadSaveMode()
+        captureQuality = preferences.loadQuality()
+        gridEnabled = preferences.gridEnabled
+        timerSeconds = preferences.timerSeconds
         bindSession()
-        sessionController.updateLayout(layout, aspectRatio: aspectRatio)
+        sessionController.commitLayout(layout, aspectRatio: aspectRatio)
+        sessionController.updateMirroring(layout)
         sessionController.updateSaveMode(saveMode)
         sessionController.updateCaptureQuality(captureQuality)
     }
@@ -64,9 +71,14 @@ final class CameraViewModel: ObservableObject {
     func handleScenePhase(_ phase: ScenePhase) {
         switch phase {
         case .active:
-            sessionController.resumePreviewIfNeeded()
-        case .inactive, .background:
-            stop()
+            sessionController.appDidBecomeActive()
+        case .inactive:
+            sessionController.appWillResignActive()
+        case .background:
+            countdownTask?.cancel()
+            countdownTask = nil
+            countdownRemaining = 0
+            sessionController.appDidEnterBackground()
         @unknown default:
             break
         }
@@ -110,44 +122,50 @@ final class CameraViewModel: ObservableObject {
     }
 
     func updatePIPFrame(_ frame: CGRect, in canvas: CGRect, snap: Bool) {
-        updateLayout(DualCameraLayoutEngine.layout(layout, movingPipTo: frame, in: canvas, snap: snap))
+        let updated = DualCameraLayoutEngine.layout(layout, movingPipTo: frame, in: canvas, snap: snap)
+        layout = updated
+        if snap {
+            commitLayoutConfiguration()
+        }
     }
 
     func setAspectRatio(_ newValue: CaptureAspectRatio) {
         aspectRatio = newValue
-        persistLayoutConfiguration()
+        commitLayoutConfiguration()
     }
 
     func setSaveMode(_ newValue: PhotoSaveMode) {
         saveMode = newValue
+        preferences.save(mode: newValue)
         sessionController.updateSaveMode(newValue)
     }
 
     func setCaptureQuality(_ newValue: CaptureQuality) {
         captureQuality = newValue
+        preferences.save(quality: newValue)
         sessionController.updateCaptureQuality(newValue)
     }
 
     func setGridEnabled(_ newValue: Bool) {
         gridEnabled = newValue
-        CameraPreferences.gridEnabled = newValue
+        preferences.gridEnabled = newValue
     }
 
     func setTimerSeconds(_ seconds: Int) {
         timerSeconds = seconds
-        CameraPreferences.timerSeconds = seconds
+        preferences.timerSeconds = seconds
     }
 
     func setFrontPreviewMirrored(_ enabled: Bool) {
         var updated = layout
         updated.frontPreviewMirrored = enabled
-        updateLayout(updated)
+        updateMirroring(updated)
     }
 
     func setFrontCaptureMirrored(_ enabled: Bool) {
         var updated = layout
         updated.frontCaptureMirrored = enabled
-        updateLayout(updated)
+        updateMirroring(updated)
     }
 
     func focusAndExpose(at point: CGPoint) {
@@ -156,6 +174,14 @@ final class CameraViewModel: ObservableObject {
 
     func zoomBackCamera(by scale: CGFloat) {
         sessionController.zoomBackCamera(by: scale)
+    }
+
+    func beginZoomGesture() {
+        sessionController.beginZoomGesture()
+    }
+
+    func endZoomGesture() {
+        sessionController.endZoomGesture()
     }
 
     func dismissLatestPhoto() {
@@ -187,13 +213,26 @@ final class CameraViewModel: ObservableObject {
         sessionController.stopRecording()
     }
 
-    private func updateLayout(_ updated: DualCameraLayout) {
-        layout = updated
-        persistLayoutConfiguration()
+    func retrySession() {
+        sessionController.retrySession()
     }
 
-    private func persistLayoutConfiguration() {
-        sessionController.updateLayout(layout, aspectRatio: aspectRatio)
+    private func updateLayout(_ updated: DualCameraLayout) {
+        layout = updated
+        commitLayoutConfiguration()
+    }
+
+    private func commitLayoutConfiguration() {
+        preferences.save(layout: layout)
+        preferences.save(aspectRatio: aspectRatio)
+        sessionController.commitLayout(layout, aspectRatio: aspectRatio)
+    }
+
+    private func updateMirroring(_ updated: DualCameraLayout) {
+        layout = updated
+        preferences.save(layout: updated)
+        sessionController.commitLayout(updated, aspectRatio: aspectRatio)
+        sessionController.updateMirroring(updated)
     }
 
     private func bindSession() {
@@ -208,7 +247,8 @@ final class CameraViewModel: ObservableObject {
             .receive(on: DispatchQueue.main)
             .sink { [weak self] notice in
                 self?.notice = notice
-                if notice?.message == CameraError.photoLibraryDenied.localizedDescription {
+                if notice?.action == .openAppSettings {
+                    self?.settingsAlertMessage = notice?.message ?? "请在系统设置中允许所需权限，然后重试。"
                     self?.showsPhotoPermissionSettings = true
                 }
             }

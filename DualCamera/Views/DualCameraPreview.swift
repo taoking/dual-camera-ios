@@ -11,7 +11,9 @@ struct DualCameraPreview: UIViewRepresentable {
     let onPIPFrameChanged: (CGRect, CGRect, Bool) -> Void
     let onPIPSizeChanged: (PIPSize) -> Void
     let onFocus: (CGPoint) -> Void
+    let onZoomBegan: () -> Void
     let onZoom: (CGFloat) -> Void
+    let onZoomEnded: () -> Void
 
     func makeUIView(context: Context) -> DualCameraPreviewView {
         let view = DualCameraPreviewView()
@@ -19,7 +21,9 @@ struct DualCameraPreview: UIViewRepresentable {
         view.onPIPFrameChanged = onPIPFrameChanged
         view.onPIPSizeChanged = onPIPSizeChanged
         view.onFocus = onFocus
+        view.onZoomBegan = onZoomBegan
         view.onZoom = onZoom
+        view.onZoomEnded = onZoomEnded
         return view
     }
 
@@ -27,7 +31,9 @@ struct DualCameraPreview: UIViewRepresentable {
         uiView.onPIPFrameChanged = onPIPFrameChanged
         uiView.onPIPSizeChanged = onPIPSizeChanged
         uiView.onFocus = onFocus
+        uiView.onZoomBegan = onZoomBegan
         uiView.onZoom = onZoom
+        uiView.onZoomEnded = onZoomEnded
         uiView.update(
             layout: layout,
             aspectRatio: aspectRatio,
@@ -55,7 +61,9 @@ final class DualCameraPreviewView: UIView {
     var onPIPFrameChanged: ((CGRect, CGRect, Bool) -> Void)?
     var onPIPSizeChanged: ((PIPSize) -> Void)?
     var onFocus: ((CGPoint) -> Void)?
+    var onZoomBegan: (() -> Void)?
     var onZoom: ((CGFloat) -> Void)?
+    var onZoomEnded: (() -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -171,14 +179,20 @@ final class DualCameraPreviewView: UIView {
         let location = gesture.location(in: self)
         if gesture.state == .began {
             pinchControlsPIP = currentLayout.style == .pictureInPicture && currentFrames.front.contains(location)
+            if !pinchControlsPIP {
+                onZoomBegan?()
+            }
         }
         if pinchControlsPIP {
-            if gesture.state == .changed || gesture.state == .ended {
+            if gesture.state == .ended {
                 onPIPSizeChanged?(PIPSize.closest(to: currentLayout.pipSize.widthRatio * gesture.scale))
             }
-        } else if gesture.state == .changed {
-            onZoom?(gesture.scale)
-            gesture.scale = 1
+        } else {
+            if gesture.state == .changed {
+                onZoom?(gesture.scale)
+            } else if gesture.state == .ended || gesture.state == .cancelled {
+                onZoomEnded?()
+            }
         }
     }
 

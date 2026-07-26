@@ -6,8 +6,8 @@ import CoreVideo
 import ImageIO
 
 /// 将两个视频数据输出合成为一条竖屏画中画视频轨道，并同步写入麦克风音频。
-/// 该类型只由 `DualCameraController.sessionQueue` 调用。
-/// 保留的实验性双摄视频录制器；本轮未扩展其布局协议。
+/// 该类型只由 `MultiCamSessionController` 的 sessionQueue 间接通过 VideoCaptureCoordinator 调用。
+/// 视频沿用既有固定画中画协议，本轮不扩展布局能力。
 final class DualCameraVideoRecorder {
     private let outputURL: URL
     private let canvasSize = CGSize(width: 720, height: 1_280)
@@ -21,6 +21,7 @@ final class DualCameraVideoRecorder {
     private var hasStartedWriting = false
     private var startTime: CMTime?
     private var recordingError: Error?
+    private var hasFinished = false
 
     init(outputURL: URL) throws {
         self.outputURL = outputURL
@@ -105,14 +106,18 @@ final class DualCameraVideoRecorder {
     }
 
     func finish(completion: @escaping (Result<URL, Error>) -> Void) {
+        guard !hasFinished else { return }
+        hasFinished = true
         if let recordingError {
             writer.cancelWriting()
+            removeOutputFile()
             completion(.failure(recordingError))
             return
         }
 
         guard hasStartedWriting else {
             writer.cancelWriting()
+            removeOutputFile()
             completion(.failure(VideoRecorderError("未收到可用于录制的视频帧。")))
             return
         }
@@ -123,9 +128,17 @@ final class DualCameraVideoRecorder {
             if writer.status == .completed {
                 completion(.success(outputURL))
             } else {
+                try? FileManager.default.removeItem(at: outputURL)
                 completion(.failure(writer.error ?? VideoRecorderError("视频文件写入未完成。")))
             }
         }
+    }
+
+    func cancel() {
+        guard !hasFinished else { return }
+        hasFinished = true
+        writer.cancelWriting()
+        removeOutputFile()
     }
 
     private func startWritingIfNeeded(at timestamp: CMTime) {
@@ -191,6 +204,10 @@ final class DualCameraVideoRecorder {
             y: rect.midY - scaled.extent.midY
         )
         return scaled.transformed(by: translation).cropped(to: rect)
+    }
+
+    private func removeOutputFile() {
+        try? FileManager.default.removeItem(at: outputURL)
     }
 }
 

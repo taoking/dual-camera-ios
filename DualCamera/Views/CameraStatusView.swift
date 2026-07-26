@@ -14,6 +14,7 @@ struct CameraStatusView: View {
 
     private func status(_ message: String, symbol: String, tint: Color) -> some View {
         Label(message, systemImage: symbol)
+            .accessibilityIdentifier("camera-status")
             .font(.footnote.weight(.semibold))
             .foregroundStyle(tint)
             .multilineTextAlignment(.center)

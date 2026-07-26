@@ -99,9 +99,44 @@ enum CameraNoticeKind: Equatable {
     }
 }
 
+enum CameraNoticeAction: Equatable {
+    case none
+    case openAppSettings
+    case retrySession
+}
+
 struct CameraNotice: Equatable {
     let message: String
     let kind: CameraNoticeKind
+    let action: CameraNoticeAction
+
+    init(message: String, kind: CameraNoticeKind, action: CameraNoticeAction = .none) {
+        self.message = message
+        self.kind = kind
+        self.action = action
+    }
+}
+
+enum PhotoCaptureState: Equatable {
+    case idle
+    case capturing
+    case composing
+    case failed(CameraError)
+}
+
+enum VideoRecordingState: Equatable {
+    case idle
+    case requestingPermission
+    case recording
+    case finishing
+    case preview
+    case failed(CameraError)
+}
+
+enum MediaSaveState: Equatable {
+    case idle
+    case saving
+    case failed(CameraError)
 }
 
 enum CaptureAspectRatio: String, CaseIterable, Identifiable, Codable {
@@ -230,25 +265,35 @@ enum CaptureQuality: String, CaseIterable, Identifiable, Codable {
     var title: String { self == .fast ? "快速" : "均衡" }
 }
 
+struct CapturedSourcePhoto {
+    /// 相机输出的文件数据；只有系统未提供时才允许保存层回退为 JPEG 重编码。
+    let originalData: Data?
+    let image: UIImage
+    let position: AVCaptureDevice.Position
+}
+
 struct CapturedPhotoSet {
     let id: UUID
     let capturedAt: Date
-    let backImage: UIImage
-    let frontImage: UIImage
+    let backPhoto: CapturedSourcePhoto
+    let frontPhoto: CapturedSourcePhoto
     let composedImage: UIImage
     let layout: DualCameraLayout
     let aspectRatio: CaptureAspectRatio
+
+    var backImage: UIImage { backPhoto.image }
+    var frontImage: UIImage { frontPhoto.image }
 }
 
 struct CaptureTransaction {
     let id: UUID
     let startedAt: Date
     let expectedPositions: Set<AVCaptureDevice.Position>
-    var receivedImages: [AVCaptureDevice.Position: UIImage] = [:]
+    var receivedPhotos: [AVCaptureDevice.Position: CapturedSourcePhoto] = [:]
     var errors: [AVCaptureDevice.Position: CameraError] = [:]
 
     var isComplete: Bool {
-        expectedPositions.allSatisfy { receivedImages[$0] != nil || errors[$0] != nil }
+        expectedPositions.allSatisfy { receivedPhotos[$0] != nil || errors[$0] != nil }
     }
 }
 

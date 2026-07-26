@@ -58,4 +58,14 @@ final class DualCameraLayoutEngineTests: XCTestCase {
         XCTAssertEqual(DualCameraLayoutEngine.outputSize(for: .square), CGSize(width: 1_440, height: 1_440))
         XCTAssertEqual(DualCameraLayoutEngine.outputSize(for: .nineBySixteen), CGSize(width: 810, height: 1_440))
     }
+
+    func testNonZeroOriginCanvasIsPreserved() {
+        var layout = DualCameraLayout.default
+        layout.style = .splitVertical
+        let canvas = CGRect(x: 40, y: 70, width: 300, height: 400)
+        let frames = DualCameraLayoutEngine.frames(in: canvas, layout: layout)
+        XCTAssertEqual(frames.back.minX, 40)
+        XCTAssertEqual(frames.front.maxX, 340)
+        XCTAssertEqual(frames.front.minY, 70)
+    }
 }

@@ -1,4 +1,3 @@
-import AVKit
 import SwiftUI
 
 struct ContentView: View {
@@ -22,7 +21,9 @@ struct ContentView: View {
                 },
                 onPIPSizeChanged: camera.setPIPSize,
                 onFocus: camera.focusAndExpose,
-                onZoom: camera.zoomBackCamera
+                onZoomBegan: camera.beginZoomGesture,
+                onZoom: camera.zoomBackCamera,
+                onZoomEnded: camera.endZoomGesture
             )
             .ignoresSafeArea()
 
@@ -76,30 +77,36 @@ struct ContentView: View {
             camera.handleScenePhase(newPhase)
         }
         .sheet(isPresented: $isSharePresented) {
-            if let shareImage {
+            if ProcessInfo.processInfo.arguments.contains("-fakeShareSheet") {
+                Text("Fake 分享面板")
+                    .font(.headline)
+                    .accessibilityIdentifier("fake-share-sheet")
+                    .presentationDetents([.medium])
+            } else if let shareImage {
                 ShareSheet(items: [shareImage])
             }
         }
-        .alert("需要“添加照片”权限", isPresented: $camera.showsPhotoPermissionSettings) {
+        .alert("需要系统权限", isPresented: $camera.showsPhotoPermissionSettings) {
             Button("去设置") {
                 camera.openAppSettings()
             }
             Button("取消", role: .cancel) {}
         } message: {
-            Text("请在系统设置中允许双摄相机添加照片，然后再保存。")
+            Text(camera.settingsAlertMessage)
         }
     }
 
     private func videoReview(url: URL) -> some View {
         ZStack(alignment: .topTrailing) {
             Color.black.ignoresSafeArea()
-            VideoPlayer(player: AVPlayer(url: url)).ignoresSafeArea()
+            ManagedVideoPlayer(url: url).ignoresSafeArea()
             Button(action: camera.dismissLatestVideo) {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 32))
                     .foregroundStyle(.white)
                     .shadow(radius: 4)
             }
+            .accessibilityIdentifier("video-review-close")
             .padding(.top, 20)
             .padding(.trailing, 20)
             VStack {
@@ -113,6 +120,7 @@ struct ContentView: View {
                         .background(.blue.opacity(0.82), in: Capsule())
                 }
                 .disabled(camera.isSavingMedia)
+                .accessibilityIdentifier("video-save")
             }
             .padding(.bottom, 30)
         }

@@ -1,57 +1,70 @@
 import Foundation
 
-enum CameraPreferences {
-    private static let layoutKey = "camera.layout"
-    private static let aspectRatioKey = "camera.aspectRatio"
-    private static let saveModeKey = "camera.saveMode"
-    private static let qualityKey = "camera.quality"
-    private static let gridKey = "camera.grid"
-    private static let timerKey = "camera.timer"
+struct CameraPreferences {
+    private enum Key {
+        static let layout = "camera.layout"
+        static let aspectRatio = "camera.aspectRatio"
+        static let saveMode = "camera.saveMode"
+        static let quality = "camera.quality"
+        static let grid = "camera.grid"
+        static let timer = "camera.timer"
+    }
 
-    static func loadLayout() -> DualCameraLayout {
-        guard let data = UserDefaults.standard.data(forKey: layoutKey),
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+    }
+
+    func loadLayout() -> DualCameraLayout {
+        guard let data = defaults.data(forKey: Key.layout),
               let layout = try? JSONDecoder().decode(DualCameraLayout.self, from: data) else {
             return .default
         }
         return layout
     }
 
-    static func save(layout: DualCameraLayout) {
+    func save(layout: DualCameraLayout) {
         guard let data = try? JSONEncoder().encode(layout) else { return }
-        UserDefaults.standard.set(data, forKey: layoutKey)
+        defaults.set(data, forKey: Key.layout)
     }
 
-    static func loadAspectRatio() -> CaptureAspectRatio {
-        CaptureAspectRatio(rawValue: UserDefaults.standard.string(forKey: aspectRatioKey) ?? "") ?? .threeByFour
+    func loadAspectRatio() -> CaptureAspectRatio {
+        CaptureAspectRatio(rawValue: defaults.string(forKey: Key.aspectRatio) ?? "") ?? .threeByFour
     }
 
-    static func save(aspectRatio: CaptureAspectRatio) {
-        UserDefaults.standard.set(aspectRatio.rawValue, forKey: aspectRatioKey)
+    func save(aspectRatio: CaptureAspectRatio) {
+        defaults.set(aspectRatio.rawValue, forKey: Key.aspectRatio)
     }
 
-    static func loadSaveMode() -> PhotoSaveMode {
-        PhotoSaveMode(rawValue: UserDefaults.standard.string(forKey: saveModeKey) ?? "") ?? .composedOnly
+    func loadSaveMode() -> PhotoSaveMode {
+        PhotoSaveMode(rawValue: defaults.string(forKey: Key.saveMode) ?? "") ?? .composedOnly
     }
 
-    static func save(mode: PhotoSaveMode) {
-        UserDefaults.standard.set(mode.rawValue, forKey: saveModeKey)
+    func save(mode: PhotoSaveMode) {
+        defaults.set(mode.rawValue, forKey: Key.saveMode)
     }
 
-    static func loadQuality() -> CaptureQuality {
-        CaptureQuality(rawValue: UserDefaults.standard.string(forKey: qualityKey) ?? "") ?? .balanced
+    func loadQuality() -> CaptureQuality {
+        CaptureQuality(rawValue: defaults.string(forKey: Key.quality) ?? "") ?? .balanced
     }
 
-    static func save(quality: CaptureQuality) {
-        UserDefaults.standard.set(quality.rawValue, forKey: qualityKey)
+    func save(quality: CaptureQuality) {
+        defaults.set(quality.rawValue, forKey: Key.quality)
     }
 
-    static var gridEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: gridKey) }
-        set { UserDefaults.standard.set(newValue, forKey: gridKey) }
+    var gridEnabled: Bool {
+        get { defaults.bool(forKey: Key.grid) }
+        nonmutating set { defaults.set(newValue, forKey: Key.grid) }
     }
 
-    static var timerSeconds: Int {
-        get { UserDefaults.standard.object(forKey: timerKey) as? Int ?? 0 }
-        set { UserDefaults.standard.set(newValue, forKey: timerKey) }
+    var timerSeconds: Int {
+        get { defaults.object(forKey: Key.timer) as? Int ?? 0 }
+        nonmutating set { defaults.set(newValue, forKey: Key.timer) }
+    }
+
+    func resetForUITesting() {
+        [Key.layout, Key.aspectRatio, Key.saveMode, Key.quality, Key.grid, Key.timer]
+            .forEach(defaults.removeObject(forKey:))
     }
 }

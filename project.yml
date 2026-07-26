@@ -9,9 +9,11 @@ schemes:
       targets:
         DualCamera: all
         DualCameraTests: [test]
+        DualCameraUITests: [test]
     test:
       targets:
         - name: DualCameraTests
+        - name: DualCameraUITests
 settings:
   base:
     SWIFT_VERSION: "5.0"
@@ -43,4 +45,16 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.yourcompany.dualcamera.tests
         TEST_HOST: "$(BUILT_PRODUCTS_DIR)/双摄相机.app/双摄相机"
         BUNDLE_LOADER: "$(TEST_HOST)"
+        GENERATE_INFOPLIST_FILE: YES
+  DualCameraUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: DualCameraUITests
+    dependencies:
+      - target: DualCamera
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yourcompany.dualcamera.uitests
+        TEST_TARGET_NAME: DualCamera
         GENERATE_INFOPLIST_FILE: YES

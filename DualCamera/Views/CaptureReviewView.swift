@@ -25,6 +25,7 @@ struct CaptureReviewView: View {
             .padding(.top, 20)
             .padding(.trailing, 20)
             .accessibilityLabel("关闭照片预览")
+            .accessibilityIdentifier("photo-review-close")
 
             VStack(spacing: 10) {
                 Spacer()
@@ -41,12 +42,14 @@ struct CaptureReviewView: View {
                     }
                     .buttonStyle(ReviewActionButtonStyle())
                     .disabled(isSaving)
+                    .accessibilityIdentifier("photo-share")
 
                     Button(action: onSave) {
                         Label(isSaving ? "正在保存…" : "保存并继续拍摄", systemImage: "square.and.arrow.down")
                     }
                     .buttonStyle(ReviewActionButtonStyle(primary: true))
                     .disabled(isSaving)
+                    .accessibilityIdentifier("photo-save")
                 }
                 Text(saveMode == .composedOnly ? "将保存合成照片" : "将保存合成照片、前摄原图和后摄原图")
                     .font(.caption2)

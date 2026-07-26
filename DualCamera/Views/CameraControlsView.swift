@@ -80,6 +80,7 @@ struct CameraControlsView: View {
         }
         .disabled(camera.isCapturing || camera.isRecording)
         .accessibilityLabel("选择双摄布局与输出画幅")
+        .accessibilityIdentifier("layout-menu")
     }
 
     private var settingsMenu: some View {
@@ -121,7 +122,9 @@ struct CameraControlsView: View {
                 .padding(9)
                 .background(.black.opacity(0.34), in: Circle())
         }
+        .disabled(camera.isCapturing || camera.isRecording)
         .accessibilityLabel("相机设置")
+        .accessibilityIdentifier("settings-menu")
     }
 
     private var controls: some View {
@@ -143,6 +146,7 @@ struct CameraControlsView: View {
             }
             .disabled((!camera.state.isReady || camera.isCapturing || camera.countdownRemaining > 0) && !camera.isRecording)
             .accessibilityLabel(camera.isRecording ? "停止视频录制" : "同时拍摄前后摄像头")
+            .accessibilityIdentifier("photo-shutter")
             Spacer()
             Button(action: camera.startRecording) {
                 ZStack {
@@ -152,6 +156,7 @@ struct CameraControlsView: View {
             }
             .disabled(!camera.state.isReady || camera.isCapturing || camera.isRecording || camera.countdownRemaining > 0)
             .accessibilityLabel("开始双摄视频录制")
+            .accessibilityIdentifier("video-record")
         }
         .padding(.horizontal, 28)
         .padding(.vertical, 10)
