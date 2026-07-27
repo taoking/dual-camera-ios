@@ -13,34 +13,40 @@ flowchart LR
   CFG --> VC[VideoCaptureCoordinator]
   PC --> TM[CaptureTransactionManager]
   SC --> Composer[PhotoComposer]
-  SC --> Library[PhotoLibraryService]
+  SC --> MSC[MediaSaveCoordinator]
+  SC --> MRS[MediaRecoveryStore]
+  MSC --> Library[PhotoLibraryService]
   Library --> PK[PhotoLibraryClient / PhotoKit]
+  MRS --> Recovery["进程内照片任务 / UserDefaults 视频路径"]
 ```
 
 - `CameraViewModel`：MainActor 上的 SwiftUI 状态入口；负责倒计时、设置持久化和 ScenePhase 转发。
-- `MultiCamSessionController`：持有 `AVCaptureMultiCamSession`，协调照片／视频模式、启动／停止／受控重建和上层状态发布。文件由改造前 1217 行降为 975 行，不再包含 Session 图搭建、格式评分、PhotoOutput delegate、事务聚合、视频帧写入、PhotoKit 实现、UserDefaults 或 Fake 图片绘制细节。
+- `MultiCamSessionController`：持有 `AVCaptureMultiCamSession`，协调照片／视频模式、启动／停止／受控重建、最近媒体和上层状态发布。它不直接实现 Session 图搭建、格式评分、PhotoOutput delegate、事务聚合、视频帧写入、PhotoKit、UserDefaults 或 Fake 图片绘制细节。
 - `CameraSessionConfigurator`：筛选前后镜头组合，建立无自动连接的 MultiCam 图，并执行有限次数的成本验收。
 - `CameraFormatSelector`：把 AVFoundation 格式映射为纯数据描述；按 MultiCam、30／24fps、分辨率、过高分辨率、binning 和视频像素格式评分。
 - `PhotoCaptureCoordinator`、`PhotoCaptureProcessor`、`CaptureTransactionManager`：持有照片输出和 delegate，管理双路 UUID、重复／过期回调、4 秒超时、取消及相机原始文件数据。
 - `VideoCaptureCoordinator`、`DualCameraVideoRecorder`：持有视频／音频输出、近邻前摄帧、AVAssetWriter 生命周期和临时文件清理。
-- `CameraLifecycleCoordinator`：用 `wantsSessionRunning`、active/background、媒体预览和中断状态计算幂等动作。
+- `CameraLifecycleCoordinator`：用 `wantsSessionRunning`、active/background 和中断状态计算幂等动作；媒体查看页不参与 Session 启动资格判定。
 - `CameraAuthorizationService`：统一相机／麦克风授权结果；Controller 在回调后再次检查生命周期。
 - `CameraRuntimeMonitor`：持有 Session 通知和设备压力 KVO。
 - `CameraDiagnosticsProvider`：生成格式、帧率和两项成本的只读诊断快照。
+- `MediaSaveCoordinator`：在独立 utility 队列执行媒体保存工作，以照片 UUID 或视频 URL 为任务 ID 去重，并将结果回传给 Controller。已接受任务会强持有协调器，同一 ID 的互斥一直保持到 PhotoKit 真实回调；不使用本地超时释放，避免不可取消的底层任务与重试重复写入。
+- `MediaRecoveryStore`：在当前进程内强持有未成功完成照片的完整保存操作，上限为 5 个；视频把标准化 `.mov` 路径写入 `UserDefaults`，使 Controller 重建后仍能发现失败文件。它还将 failed 路径与正在保存的 URL 去重合并，为新录像提供 5 个／1 GiB 的容量闸门。
+- `CameraNoticePolicy`：阻止较低优先级提示覆盖尚未处理的可操作错误；恢复优先级为重试 Session、打开设置、重试媒体，按钮执行时只按该条提示的唯一 ID 消费。
 - `PhotoLibraryService`：通过可注入的 `PhotoLibraryClient` 使用 add-only 权限并一次性写入资源；测试不调用真实 PhotoKit。
 - `CameraPreferences`：注入 `UserDefaults`，测试 Suite 不污染用户设置。
 
 ## 串行性与状态
 
-所有 Session、连接、设备锁和 Coordinator 状态变更均进入 `com.taoking.dualcamera.session` 串行队列；图片合成和视频帧渲染不在主线程执行；`@Published` 界面状态回到主队列。
+所有 Session、连接、设备锁和拍摄 Coordinator 状态变更均进入 `com.taoking.dualcamera.session` 串行队列；图片合成和视频帧渲染不在主线程执行。照片 JPEG 处理与 PhotoKit 保存调度进入 `com.taoking.dualcamera.media-save` 独立队列，不阻塞 Session 队列；`@Published` 界面状态回到主队列。
 
 界面仍聚合展示 `CameraState`，内部另行发布：
 
 - `PhotoCaptureState`：idle／capturing／composing／failed；
-- `VideoRecordingState`：idle／请求权限／recording／finishing／preview／failed；
-- `MediaSaveState`：idle／saving／failed。
+- `VideoRecordingState`：idle／请求权限／recording／finishing／preview／failed；界面把关键过渡显示为准备、录制中和处理中；
+- `MediaSaveState`：idle／saving／saved／failed。
 
-单次拍照、视频或保存失败不会把长期 Session 永久改为 failed。`CameraNotice` 使用 `CameraNoticeAction` 表达打开设置或重试，不比较中文文案。
+单次拍照、视频或保存失败不会把长期 Session 永久改为 failed。`MediaSaveCoordinator` 拒绝相同 ID 的重复入队，但允许不同媒体任务保持独立；Controller 只让与最近媒体 ID 匹配的回调更新当前保存徽标、成功／失败提示和触感，避免旧任务覆盖新结果。视频另外以 URL 为键维护 saving/saved/failed 内部状态，文件删除决策不再依赖缩略图是否存在。`CameraNotice` 使用 `CameraNoticeAction` 表达打开设置或重试，不比较中文文案；有 action 的提示不参与普通提示的自动消失。每条提示携带唯一 ID，ViewModel 点击操作时按 ID 消费，旧界面事件无法清除后来发布的提示。
 
 ## 格式与成本降级
 
@@ -65,6 +71,22 @@ flowchart LR
 
 共享事务只保证结果配对，不保证严格同步曝光。
 
+## 非阻断保存与最近媒体
+
+照片合成成功后，Controller 先用该事务 UUID 替换最近媒体，再把当次保存模式和照片快照交给 `MediaSaveCoordinator`。这个路径不停止 `AVCaptureMultiCamSession`，也不自动打开查看页；实时取景、对焦和下一次拍摄与保存队列解耦。Controller 在 Session 队列上为成功开始的视频和后续照片生成单调序号，只允许序号不早于当前媒体的结果替换缩略图。
+
+照片保存操作在入队前先记入 `MediaRecoveryStore`，只有真实保存成功才移除。当前进程最多保留 5 个这类任务；拍照入口在上限前检查容量，已满时不启动新事务，而是发布带 `.retryMediaSaves` 操作的提示。
+
+视频停止时，Controller 立即切回照片模式并在生命周期允许时重建取景 Session；`AVAssetWriter.finishWriting` 完成后，新 URL 才入队保存。因此视频处理和 PhotoKit 写入可在已恢复的取景之后继续。若用户已在 finishing 期间拍了更新照片，较早视频仍会保存，但不再回退最近媒体缩略图。
+
+SwiftUI 默认只显示左下角最近媒体缩略图和 saving/saved/failed 徽标。用户主动点击后才覆盖显示照片或视频；照片可分享，保存失败的照片和视频可以用同一 ID 重试。如果失败回调属于已被替换的较早媒体，Controller 不改写最近徽标，而是发布指明“较早照片／视频”的错误提示条和“重试保存”操作。查看层的出现和消失不更改 Session 运行意图。
+
+视频 URL 在 Controller 内有显式 saving/saved/failed 状态。替换最近媒体时，saving 视频记入待删集合，只在保存成功后删除；saved 视频可直接移除恢复索引并清理 `.mov`；failed 视频保留唯一文件并重试。这一显式状态机避免了保存完成回调与新媒体替换同时发生时的删除竞态。
+
+失败视频的标准化路径写入 `UserDefaults`。新 Controller 在启动或重回 active 时枚举索引：文件仍存在则重试，不存在则删除无效路径。相机界面正常退出并调用 `stop` 时，saved 的最近视频立即清理，saving 的视频等真实回调成功后清理，failed 的视频继续保留恢复索引和缓存文件。若 `finishWriting` 在 Controller 退出后才返回，脱离界面的保存路径仍会写入相册，成功时清理缓存，失败时记录恢复路径。
+
+开始新录像前，Controller 取 `MediaRecoveryStore` 的 failed 路径与 `MediaSaveCoordinator.activeVideoURLs` 的 saving URL，全部标准化后作并集，因此同一文件同时出现在两处也只计一个。并集已有 5 个或现存文件累计已达 1 GiB 时，录像入口发布 `.retryMediaSaves` 错误并返回，不创建 recorder，也不删除任何恢复文件。
+
 ## 布局与手势提交边界
 
 `DualCameraLayoutEngine` 同时服务预览与照片成片。画中画拖动 `.changed` 只更新 ViewModel 内存和 SwiftUI/UIView 预览；`.ended` 才吸附、写 UserDefaults 并提交拍摄布局。位置提交不会重设镜像。尺寸、布局、比例和镜像由离散操作持久化。
@@ -75,12 +97,14 @@ flowchart LR
 
 - inactive：仅暂停新的异步启动资格，不立即停止或重建已经运行的 Session；
 - background：取消倒计时／未完成照片工作，停止 Session，并安全结束录制；
-- active：仅在用户仍希望运行、无照片／视频预览且未中断时启动；
+- active：在用户仍希望运行且未中断时启动；照片／视频查看不再是启动否决条件；
 - 授权回调：重新检查上述条件，避免回调把后台 Session 拉起；
-- 中断结束：按同一状态机恢复；`mediaServicesWereReset` 只在允许运行时重建。
+- 中断结束：按同一状态机恢复；`mediaServicesWereReset` 重建前清空授权等待、Fake 录制、当次媒体序号和计时，并强制回到照片模式。普通 recorder 可取消并发布 idle；若旧 writer 已进入不可取消的 `finishWriting`，`VideoCaptureCoordinator.isFinishingRecording` 和 `VideoRecordingState.finishing` 都保持到旧回调，期间阻止新录像。
 
-视频保持固定画中画 720×1280 H.264 + AAC：没有视频帧会明确失败；早于首个视频时间戳的音频被忽略；stop 只能消费一次 recorder。临时 `.mov` 会在写入失败、用户关闭预览、保存成功、保存失败后放弃、新录制覆盖旧结果以及 Controller 释放时删除。`ManagedVideoPlayer` 在预览消失时暂停并释放 PlayerItem。
+视频保持固定画中画 720×1280 H.264 + AAC：没有视频帧会明确失败；早于首个视频时间戳的音频被忽略；stop 只能消费一次 recorder。录制状态条在请求麦克风时显示准备、录制时显示红点和基于 `systemUptime` 的单调计时，停止后保留最后时长并显示处理。时长不足一小时格式化为 `MM:SS`，长录制为 `HH:MM:SS`。
+
+录制写入失败时，未完成的 `.mov` 会立即清理；视频已生成但 PhotoKit 保存失败时，完整 `.mov` 则必须保留供恢复。`ManagedVideoPlayer` 在查看层消失时暂停并释放 PlayerItem。
 
 ## 自动验证边界
 
-`DualCameraTests` 覆盖格式、质量、事务、生命周期、PhotoKit 适配、偏好、布局、合成和视频资源；`DualCameraUITests` 通过 Fake Camera 覆盖核心界面路径。模拟器不能验证真实 MultiCam、成本数值、镜头组合、压力回调、对焦、麦克风音画或相册最终文件方向，这些属于 iPhone 16 Pro 真机验收。
+`DualCameraTests` 包含格式、质量、事务、生命周期、PhotoKit 适配、媒体保存去重、偏好、布局、合成和视频资源用例；`DualCameraUITests` 通过 Fake Camera 描述最近媒体、保存失败重试、录制状态与时长等核心界面路径。此处只说明测试边界，不代表本轮已执行。模拟器不能验证真实 MultiCam、成本数值、镜头组合、压力回调、对焦、麦克风音画或相册最终文件方向，这些属于 iPhone 16 Pro 真机验收。

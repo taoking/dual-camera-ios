@@ -10,10 +10,12 @@ final class CameraViewModel: ObservableObject {
     @Published private(set) var state: CameraState = .idle
     @Published private(set) var isCapturing = false
     @Published private(set) var isRecording = false
+    @Published private(set) var videoState: VideoRecordingState = .idle
     @Published private(set) var recordingDuration: TimeInterval = 0
-    @Published private(set) var isSavingMedia = false
+    @Published private(set) var mediaSaveState: MediaSaveState = .idle
     @Published private(set) var latestPhotoSet: CapturedPhotoSet?
     @Published private(set) var latestVideoURL: URL?
+    @Published private(set) var isMediaReviewPresented = false
     @Published private(set) var notice: CameraNotice?
     @Published private(set) var availableRearCameras: [RearCameraOption] = []
     @Published private(set) var selectedRearCamera: RearCameraOption = .wide
@@ -65,6 +67,7 @@ final class CameraViewModel: ObservableObject {
         countdownTask?.cancel()
         countdownTask = nil
         countdownRemaining = 0
+        isMediaReviewPresented = false
         sessionController.stop()
     }
 
@@ -184,25 +187,35 @@ final class CameraViewModel: ObservableObject {
         sessionController.endZoomGesture()
     }
 
-    func dismissLatestPhoto() {
-        sessionController.dismissLatestPhoto()
+    func presentLatestMedia() {
+        guard latestPhotoSet != nil || latestVideoURL != nil else { return }
+        isMediaReviewPresented = true
+    }
+
+    func dismissMediaReview() {
+        isMediaReviewPresented = false
     }
 
     func saveLatestPhoto() {
+        if let id = latestPhotoSet?.id {
+            consumeCurrentNotice(for: .photo(id))
+        }
         sessionController.saveLatestPhoto()
+        sessionController.retryPendingMediaSaves()
     }
 
     func openAppSettings() {
+        showsPhotoPermissionSettings = false
         guard let url = URL(string: UIApplication.openSettingsURLString) else { return }
         UIApplication.shared.open(url)
     }
 
-    func dismissLatestVideo() {
-        sessionController.dismissLatestVideo()
-    }
-
     func saveLatestVideo() {
+        if let url = latestVideoURL {
+            consumeCurrentNotice(for: .video(url))
+        }
         sessionController.saveLatestVideo()
+        sessionController.retryPendingMediaSaves()
     }
 
     func startRecording() {
@@ -215,6 +228,27 @@ final class CameraViewModel: ObservableObject {
 
     func retrySession() {
         sessionController.retrySession()
+    }
+
+    func performStatusAction(_ action: CameraNoticeAction, notice: CameraNotice?) {
+        if let notice, notice.action == action {
+            sessionController.consumeNotice(notice)
+        }
+        switch action {
+        case .none:
+            break
+        case .openAppSettings:
+            openAppSettings()
+        case .retrySession:
+            retrySession()
+        case .retryMediaSaves:
+            sessionController.retryPendingMediaSaves()
+        }
+    }
+
+    private func consumeCurrentNotice(for mediaJobID: MediaSaveJobID) {
+        guard let notice, notice.mediaJobID == mediaJobID else { return }
+        sessionController.consumeNotice(notice)
     }
 
     private func updateLayout(_ updated: DualCameraLayout) {
@@ -239,18 +273,21 @@ final class CameraViewModel: ObservableObject {
         sessionController.$state.receive(on: DispatchQueue.main).assign(to: &$state)
         sessionController.$isCapturing.receive(on: DispatchQueue.main).assign(to: &$isCapturing)
         sessionController.$isRecording.receive(on: DispatchQueue.main).assign(to: &$isRecording)
+        sessionController.$videoState.receive(on: DispatchQueue.main).assign(to: &$videoState)
         sessionController.$recordingDuration.receive(on: DispatchQueue.main).assign(to: &$recordingDuration)
-        sessionController.$isSavingMedia.receive(on: DispatchQueue.main).assign(to: &$isSavingMedia)
+        sessionController.$mediaSaveState.receive(on: DispatchQueue.main).assign(to: &$mediaSaveState)
         sessionController.$latestPhotoSet.receive(on: DispatchQueue.main).assign(to: &$latestPhotoSet)
         sessionController.$latestVideoURL.receive(on: DispatchQueue.main).assign(to: &$latestVideoURL)
         sessionController.$notice
             .receive(on: DispatchQueue.main)
             .sink { [weak self] notice in
-                self?.notice = notice
-                if notice?.action == .openAppSettings {
-                    self?.settingsAlertMessage = notice?.message ?? "请在系统设置中允许所需权限，然后重试。"
-                    self?.showsPhotoPermissionSettings = true
+                guard let self else { return }
+                self.notice = notice
+                let needsSettings = notice?.action == .openAppSettings
+                if needsSettings {
+                    self.settingsAlertMessage = notice?.message ?? "请在系统设置中允许所需权限，然后重试。"
                 }
+                self.showsPhotoPermissionSettings = needsSettings
             }
             .store(in: &cancellables)
         sessionController.$availableRearCameras.receive(on: DispatchQueue.main).assign(to: &$availableRearCameras)

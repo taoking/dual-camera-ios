@@ -14,6 +14,7 @@ final class VideoCaptureCoordinator: NSObject {
     private var isFinishing = false
 
     var isRecording: Bool { recorder != nil && !isFinishing }
+    var isFinishingRecording: Bool { isFinishing }
 
     init(sessionQueue: DispatchQueue) {
         self.sessionQueue = sessionQueue
@@ -87,9 +88,9 @@ final class VideoCaptureCoordinator: NSObject {
         self.recorder = nil
         isFinishing = true
         latestFrontSampleBuffer = nil
-        recorder.finish { [weak self] result in
-            self?.sessionQueue.async {
-                self?.isFinishing = false
+        recorder.finish { [self] result in
+            sessionQueue.async { [self] in
+                isFinishing = false
                 switch result {
                 case .success(let url):
                     completion(.success(url))
@@ -102,9 +103,14 @@ final class VideoCaptureCoordinator: NSObject {
     }
 
     func cancelRecording() {
+        // finishWriting 已接管 writer 后无法再取消；此时保持 finishing 闸门，直到旧
+        // 回调送达，避免媒体服务重置后过早开始新录像并被旧回调覆盖状态。
+        guard !isFinishing else {
+            latestFrontSampleBuffer = nil
+            return
+        }
         recorder?.cancel()
         recorder = nil
-        isFinishing = false
         latestFrontSampleBuffer = nil
     }
 

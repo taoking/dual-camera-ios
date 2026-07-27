@@ -7,17 +7,16 @@ enum CameraLifecycleAction: Equatable {
     case rebuildSession
 }
 
-/// 把 ScenePhase、媒体预览和系统中断归并为可测试的启动意图。
+/// 把 ScenePhase 和系统中断归并为可测试的启动意图。
 /// 它不直接触碰 AVCaptureSession，具体动作仍由 Session Controller 的串行队列执行。
 final class CameraLifecycleCoordinator {
     private(set) var wantsSessionRunning = false
     private(set) var appIsActive = true
     private(set) var appIsBackgrounded = false
-    private(set) var hasMediaPreview = false
     private(set) var isInterrupted = false
 
     var mayStartSession: Bool {
-        wantsSessionRunning && appIsActive && !appIsBackgrounded && !hasMediaPreview && !isInterrupted
+        wantsSessionRunning && appIsActive && !appIsBackgrounded && !isInterrupted
     }
 
     func requestStart(sessionIsRunning: Bool) -> CameraLifecycleAction {
@@ -46,11 +45,6 @@ final class CameraLifecycleCoordinator {
         appIsActive = false
         appIsBackgrounded = true
         return sessionIsRunning ? .stopSession : .none
-    }
-
-    func setMediaPreview(_ presented: Bool, sessionIsRunning: Bool) -> CameraLifecycleAction {
-        hasMediaPreview = presented
-        return actionForCurrentState(sessionIsRunning: sessionIsRunning)
     }
 
     func interruptionBegan(sessionIsRunning: Bool) -> CameraLifecycleAction {

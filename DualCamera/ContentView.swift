@@ -39,11 +39,14 @@ struct ContentView: View {
 
             VStack {
                 Spacer()
-                CameraStatusView(notice: camera.notice, state: camera.state)
+                CameraStatusView(
+                    notice: camera.notice,
+                    state: camera.state,
+                    onAction: camera.performStatusAction
+                )
                     .padding(.horizontal, 24)
                     .padding(.bottom, 126)
             }
-            .allowsHitTesting(false)
 
             if camera.countdownRemaining > 0 {
                 Text("\(camera.countdownRemaining)")
@@ -53,12 +56,12 @@ struct ContentView: View {
                     .accessibilityLabel("倒计时 \(camera.countdownRemaining) 秒")
             }
 
-            if let photoSet = camera.latestPhotoSet {
+            if camera.isMediaReviewPresented, let photoSet = camera.latestPhotoSet {
                 CaptureReviewView(
                     photoSet: photoSet,
-                    isSaving: camera.isSavingMedia,
-                    saveMode: camera.saveMode,
-                    onDismiss: camera.dismissLatestPhoto,
+                    saveState: camera.mediaSaveState,
+                    saveMode: photoSet.saveMode,
+                    onDismiss: camera.dismissMediaReview,
                     onSave: camera.saveLatestPhoto,
                     onShare: {
                         shareImage = photoSet.composedImage
@@ -67,7 +70,7 @@ struct ContentView: View {
                 )
             }
 
-            if let videoURL = camera.latestVideoURL {
+            if camera.isMediaReviewPresented, let videoURL = camera.latestVideoURL {
                 videoReview(url: videoURL)
             }
         }
@@ -88,7 +91,7 @@ struct ContentView: View {
         }
         .alert("需要系统权限", isPresented: $camera.showsPhotoPermissionSettings) {
             Button("去设置") {
-                camera.openAppSettings()
+                camera.performStatusAction(.openAppSettings, notice: camera.notice)
             }
             Button("取消", role: .cancel) {}
         } message: {
@@ -100,7 +103,7 @@ struct ContentView: View {
         ZStack(alignment: .topTrailing) {
             Color.black.ignoresSafeArea()
             ManagedVideoPlayer(url: url).ignoresSafeArea()
-            Button(action: camera.dismissLatestVideo) {
+            Button(action: camera.dismissMediaReview) {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 32))
                     .foregroundStyle(.white)
@@ -111,18 +114,46 @@ struct ContentView: View {
             .padding(.trailing, 20)
             VStack {
                 Spacer()
-                Button(action: camera.saveLatestVideo) {
-                    Label(camera.isSavingMedia ? "正在保存…" : "保存并继续拍摄", systemImage: "square.and.arrow.down")
-                        .font(.headline)
+                VStack(spacing: 12) {
+                    Label(videoSaveStatusText, systemImage: videoSaveStatusSymbol)
+                        .font(.footnote.weight(.semibold))
                         .foregroundStyle(.white)
-                        .padding(.horizontal, 18)
-                        .padding(.vertical, 12)
-                        .background(.blue.opacity(0.82), in: Capsule())
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 9)
+                        .background(.black.opacity(0.62), in: Capsule())
+
+                    if camera.mediaSaveState.canRetry {
+                        Button(action: camera.saveLatestVideo) {
+                            Label("重试保存", systemImage: "arrow.clockwise")
+                                .font(.headline)
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 18)
+                                .padding(.vertical, 12)
+                                .background(.blue.opacity(0.82), in: Capsule())
+                        }
+                        .accessibilityIdentifier("video-save")
+                    }
                 }
-                .disabled(camera.isSavingMedia)
-                .accessibilityIdentifier("video-save")
             }
             .padding(.bottom, 30)
+        }
+    }
+
+    private var videoSaveStatusText: String {
+        switch camera.mediaSaveState {
+        case .idle: "等待后台保存"
+        case .saving: "正在后台保存，实时预览不受影响"
+        case .saved: "视频已保存到系统相册"
+        case .failed: "视频保存失败，可重试"
+        }
+    }
+
+    private var videoSaveStatusSymbol: String {
+        switch camera.mediaSaveState {
+        case .idle: "clock"
+        case .saving: "arrow.triangle.2.circlepath"
+        case .saved: "checkmark.circle.fill"
+        case .failed: "exclamationmark.triangle.fill"
         }
     }
 }

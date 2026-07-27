@@ -10,5 +10,6 @@ enum CameraLog {
     static let capture = Logger(subsystem: subsystem, category: "capture")
     static let composition = Logger(subsystem: subsystem, category: "composition")
     static let photoLibrary = Logger(subsystem: subsystem, category: "photoLibrary")
+    static let media = Logger(subsystem: subsystem, category: "media")
     static let interruption = Logger(subsystem: subsystem, category: "interruption")
 }

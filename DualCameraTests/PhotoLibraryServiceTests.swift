@@ -99,7 +99,8 @@ final class PhotoLibraryServiceTests: XCTestCase {
             frontPhoto: CapturedSourcePhoto(originalData: frontData, image: image, position: .front),
             composedImage: image,
             layout: .default,
-            aspectRatio: .threeByFour
+            aspectRatio: .threeByFour,
+            saveMode: .composedOnly
         )
     }
 

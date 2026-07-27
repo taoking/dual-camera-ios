@@ -83,6 +83,17 @@ enum CameraState: Equatable {
         case .idle, .ready: "camera"
         }
     }
+
+    var recoveryAction: CameraNoticeAction {
+        switch self {
+        case .permissionDenied, .microphonePermissionDenied:
+            .openAppSettings
+        case .failed:
+            .retrySession
+        case .idle, .requestingAuthorization, .requestingMicrophoneAuthorization, .ready, .unsupported:
+            .none
+        }
+    }
 }
 
 enum CameraNoticeKind: Equatable {
@@ -103,17 +114,56 @@ enum CameraNoticeAction: Equatable {
     case none
     case openAppSettings
     case retrySession
+    case retryMediaSaves
+
+    fileprivate var recoveryPriority: Int {
+        switch self {
+        case .none: 0
+        case .retryMediaSaves: 1
+        case .openAppSettings: 2
+        case .retrySession: 3
+        }
+    }
 }
 
-struct CameraNotice: Equatable {
+struct CameraNotice: Equatable, Identifiable {
+    let id: UUID
     let message: String
     let kind: CameraNoticeKind
     let action: CameraNoticeAction
+    let mediaJobID: MediaSaveJobID?
 
-    init(message: String, kind: CameraNoticeKind, action: CameraNoticeAction = .none) {
+    init(
+        id: UUID = UUID(),
+        message: String,
+        kind: CameraNoticeKind,
+        action: CameraNoticeAction = .none,
+        mediaJobID: MediaSaveJobID? = nil
+    ) {
+        self.id = id
         self.message = message
         self.kind = kind
         self.action = action
+        self.mediaJobID = mediaJobID
+    }
+}
+
+/// 可执行错误在用户处理前不能被低优先级提示夺走入口；用户操作按提示 ID
+/// 消费，媒体重试成功则只按保存任务 ID 清理对应失败，避免误清新的错误。
+enum CameraNoticePolicy {
+    static func shouldPublish(_ incoming: CameraNotice, replacing current: CameraNotice?) -> Bool {
+        guard let current else { return true }
+        return incoming.action.recoveryPriority >= current.action.recoveryPriority
+    }
+
+    static func consuming(_ consumed: CameraNotice, from current: CameraNotice?) -> CameraNotice? {
+        guard consumed.action != .none, current?.id == consumed.id else { return current }
+        return nil
+    }
+
+    static func resolvingMediaSave(_ id: MediaSaveJobID, from current: CameraNotice?) -> CameraNotice? {
+        guard current?.mediaJobID == id else { return current }
+        return nil
     }
 }
 
@@ -131,12 +181,40 @@ enum VideoRecordingState: Equatable {
     case finishing
     case preview
     case failed(CameraError)
+
+    var statusTitle: String? {
+        switch self {
+        case .requestingPermission:
+            "正在准备录制…"
+        case .recording:
+            "录制中"
+        case .finishing:
+            "正在处理视频…"
+        case .idle, .preview, .failed:
+            nil
+        }
+    }
+
+    var preventsNewRecording: Bool {
+        switch self {
+        case .requestingPermission, .recording, .finishing:
+            true
+        case .idle, .preview, .failed:
+            false
+        }
+    }
 }
 
 enum MediaSaveState: Equatable {
     case idle
     case saving
+    case saved
     case failed(CameraError)
+
+    var canRetry: Bool {
+        if case .failed = self { return true }
+        return false
+    }
 }
 
 enum CaptureAspectRatio: String, CaseIterable, Identifiable, Codable {
@@ -280,6 +358,7 @@ struct CapturedPhotoSet {
     let composedImage: UIImage
     let layout: DualCameraLayout
     let aspectRatio: CaptureAspectRatio
+    let saveMode: PhotoSaveMode
 
     var backImage: UIImage { backPhoto.image }
     var frontImage: UIImage { frontPhoto.image }

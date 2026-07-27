@@ -2,7 +2,7 @@ import SwiftUI
 
 struct CaptureReviewView: View {
     let photoSet: CapturedPhotoSet
-    let isSaving: Bool
+    let saveState: MediaSaveState
     let saveMode: PhotoSaveMode
     let onDismiss: () -> Void
     let onSave: () -> Void
@@ -41,21 +41,35 @@ struct CaptureReviewView: View {
                         Label("分享", systemImage: "square.and.arrow.up")
                     }
                     .buttonStyle(ReviewActionButtonStyle())
-                    .disabled(isSaving)
                     .accessibilityIdentifier("photo-share")
 
-                    Button(action: onSave) {
-                        Label(isSaving ? "正在保存…" : "保存并继续拍摄", systemImage: "square.and.arrow.down")
+                    if saveState.canRetry {
+                        Button(action: onSave) {
+                            Label("重试保存", systemImage: "arrow.clockwise")
+                        }
+                        .buttonStyle(ReviewActionButtonStyle(primary: true))
+                        .accessibilityIdentifier("photo-save")
                     }
-                    .buttonStyle(ReviewActionButtonStyle(primary: true))
-                    .disabled(isSaving)
-                    .accessibilityIdentifier("photo-save")
                 }
-                Text(saveMode == .composedOnly ? "将保存合成照片" : "将保存合成照片、前摄原图和后摄原图")
+                Text(saveStatusText)
                     .font(.caption2)
                     .foregroundStyle(.white.opacity(0.72))
             }
             .padding(.bottom, 30)
+        }
+    }
+
+    private var saveStatusText: String {
+        let content = saveMode == .composedOnly ? "合成照片" : "合成照片及前后摄原图"
+        switch saveState {
+        case .idle:
+            return "等待保存\(content)"
+        case .saving:
+            return "正在后台保存\(content)，实时预览不受影响"
+        case .saved:
+            return "\(content)已保存到系统相册"
+        case .failed:
+            return "保存失败，可重试"
         }
     }
 }
