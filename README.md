@@ -41,6 +41,18 @@
 
 工程不包含个人 Team ID，默认 Bundle Identifier 为 `com.yourcompany.dualcamera`，安装前必须由开发者配置。
 
+## 安装到自己的 iPhone
+
+连上手机并保持解锁，然后：
+
+```sh
+./scripts/install-to-device.sh
+```
+
+自动完成选 Xcode、找设备、签名、覆盖安装与启动。个人开发签名约 7 天到期，
+到期后重跑同一条命令即可，不需要删除应用或重新配置。详见
+[开发签名续期与真机更新手册](docs/开发签名续期与真机更新手册.md)。
+
 ## 验证命令
 
 ```sh

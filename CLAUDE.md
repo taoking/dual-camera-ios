@@ -60,6 +60,8 @@ xcodebuild -project DualCamera.xcodeproj -scheme DualCamera \
 
 `.github/workflows/ios.yml` picks an available iPhone simulator dynamically at runtime rather than hardcoding one — don't assume a specific simulator name/OS will exist on the runner. CI passing is only real once it has actually run remotely; don't claim it based on local results alone.
 
+Installing to the physical test device is scripted — `./scripts/install-to-device.sh` picks the right Xcode, finds the paired device, signs, installs and launches. Personal Team ID / bundle ID land in the gitignored `scripts/.device-config`.
+
 Before installing on a physical device, a developer must fill in their own Team ID and a unique bundle identifier under **DualCamera target → Signing & Capabilities** (the repo ships with a placeholder `com.yourcompany.dualcamera`).
 
 ## Fake Camera Mode

@@ -30,3 +30,6 @@ fastlane/test_output/
 
 # 本机专属环境记录，不进仓库
 docs/开发环境.md
+
+# 本机签名配置，不进仓库
+scripts/.device-config
