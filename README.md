@@ -46,11 +46,11 @@
 ```sh
 xcodegen generate
 xcodebuild test -project DualCamera.xcodeproj -scheme DualCamera \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5' \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=27.0' \
   -only-testing:DualCameraTests \
   CODE_SIGNING_ALLOWED=NO
 xcodebuild test -project DualCamera.xcodeproj -scheme DualCamera \
-  -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=26.5' \
+  -destination 'platform=iOS Simulator,name=iPhone 17 Pro,OS=27.0' \
   -only-testing:DualCameraUITests \
   CODE_SIGNING_ALLOWED=NO
 xcodebuild -project DualCamera.xcodeproj -scheme DualCamera \
@@ -68,6 +68,7 @@ xcodebuild -project DualCamera.xcodeproj -scheme DualCamera \
 - [执行日志](docs/执行日志.md)：主要构建、测试、发布与真机安装结果
 - [变更记录](CHANGELOG.md)
 - [iOS 应用开发、打包与发布全流程指南](docs/iOS应用开发、打包与发布全流程指南.md)
+- [开发签名续期与真机更新手册](docs/开发签名续期与真机更新手册.md)：7 天到期后的构建、覆盖安装、信任与排障
 
 ## 隐私
 

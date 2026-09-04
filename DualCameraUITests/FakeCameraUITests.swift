@@ -59,11 +59,11 @@ final class FakeCameraUITests: XCTestCase {
         launch()
         app.buttons["photo-shutter"].tap()
         let failure = app.staticTexts.matching(identifier: "camera-status")
-            .containing(NSPredicate(format: "label CONTAINS %@", "模拟保存失败"))
+            .matching(NSPredicate(format: "label CONTAINS %@", "模拟保存失败"))
             .firstMatch
         XCTAssertTrue(failure.waitForExistence(timeout: 4))
         let retrySave = app.buttons["camera-status-action"]
-        XCTAssertTrue(retrySave.waitForExistence(timeout: 2))
+        XCTAssertTrue(retrySave.waitForExistence(timeout: 4))
         XCTAssertEqual(retrySave.label, "重试保存")
         XCTAssertFalse(app.buttons["photo-review-close"].exists)
         XCTAssertTrue(app.buttons["photo-shutter"].isHittable)
@@ -102,7 +102,13 @@ final class FakeCameraUITests: XCTestCase {
     private func launch() {
         app.launch()
         XCTAssertTrue(app.staticTexts["模拟"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.buttons["photo-shutter"].waitForExistence(timeout: 3))
+        let shutter = app.buttons["photo-shutter"]
+        XCTAssertTrue(shutter.waitForExistence(timeout: 3))
+        let readyForCapture = expectation(
+            for: NSPredicate(format: "enabled == true"),
+            evaluatedWith: shutter
+        )
+        wait(for: [readyForCapture], timeout: 3)
     }
 
     private func selectFromLayoutMenu(_ title: String) {

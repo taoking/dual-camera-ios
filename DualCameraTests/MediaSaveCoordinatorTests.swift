@@ -99,6 +99,9 @@ final class MediaSaveCoordinatorTests: XCTestCase {
         let capturedIDs = completedIDs
         lock.unlock()
         XCTAssertEqual(capturedIDs, [firstID, secondID])
+        waitUntil("任务完成回调返回后才释放 active") {
+            coordinator.activeJobCount == 0
+        }
         XCTAssertEqual(coordinator.activeJobCount, 0)
     }
 
@@ -154,6 +157,9 @@ final class MediaSaveCoordinatorTests: XCTestCase {
         let capturedCount = completionCount
         lock.unlock()
         XCTAssertEqual(capturedCount, 1)
+        waitUntil("重复回调收尾后释放 active") {
+            !coordinator.contains(id)
+        }
         XCTAssertFalse(coordinator.contains(id))
     }
 
@@ -173,6 +179,9 @@ final class MediaSaveCoordinatorTests: XCTestCase {
         ))
 
         wait(for: [firstCompletion], timeout: 1)
+        waitUntil("首轮完成收尾") {
+            !coordinator.contains(id)
+        }
         XCTAssertFalse(coordinator.contains(id))
 
         XCTAssertTrue(coordinator.enqueue(
@@ -185,6 +194,9 @@ final class MediaSaveCoordinatorTests: XCTestCase {
         ))
 
         wait(for: [secondCompletion], timeout: 1)
+        waitUntil("第二轮完成收尾") {
+            !coordinator.contains(id)
+        }
         XCTAssertFalse(coordinator.contains(id))
     }
 
@@ -529,6 +541,28 @@ final class MediaSaveCoordinatorTests: XCTestCase {
         if case .failure(let error) = result {
             XCTFail("预期保存成功，实际失败：\(error.localizedDescription)", file: file, line: line)
         }
+    }
+
+    private func waitUntil(
+        _ description: String,
+        timeout: TimeInterval = 1,
+        condition: @escaping () -> Bool
+    ) {
+        let fulfilled = expectation(description: description)
+        DispatchQueue.global(qos: .utility).async {
+            let deadline = Date().addingTimeInterval(timeout)
+            while Date() < deadline {
+                if condition() {
+                    fulfilled.fulfill()
+                    return
+                }
+                Thread.sleep(forTimeInterval: 0.005)
+            }
+            if condition() {
+                fulfilled.fulfill()
+            }
+        }
+        wait(for: [fulfilled], timeout: timeout + 0.2)
     }
 
     private func finalizedMovieData() -> Data {

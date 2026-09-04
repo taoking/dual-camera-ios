@@ -1253,11 +1253,14 @@ final class MultiCamSessionController: NSObject, ObservableObject {
     private func makeRuntimeMonitor() -> CameraRuntimeMonitor {
         let monitor = CameraRuntimeMonitor(session: session)
         monitor.onPressureChanged = { [weak self] level in
-            self?.sessionQueue.async { self?.handleSystemPressure(level) }
+            self?.sessionQueue.async { [weak self] in
+                guard let self, !self.isFakeCamera else { return }
+                self.handleSystemPressure(level)
+            }
         }
         monitor.onInterruptionBegan = { [weak self] in
             self?.sessionQueue.async {
-                guard let self else { return }
+                guard let self, !self.isFakeCamera else { return }
                 _ = self.lifecycle.interruptionBegan(sessionIsRunning: self.isSessionRunning)
                 self.cancelPendingPhotoWork()
                 self.stopSessionLocked(finishRecording: true)
@@ -1266,14 +1269,14 @@ final class MultiCamSessionController: NSObject, ObservableObject {
         }
         monitor.onInterruptionEnded = { [weak self] in
             self?.sessionQueue.async {
-                guard let self else { return }
+                guard let self, !self.isFakeCamera else { return }
                 let action = self.lifecycle.interruptionEnded(sessionIsRunning: self.isSessionRunning)
                 self.performLifecycleAction(action)
             }
         }
         monitor.onRuntimeError = { [weak self] error in
             self?.sessionQueue.async {
-                guard let self else { return }
+                guard let self, !self.isFakeCamera else { return }
                 if error?.code == .mediaServicesWereReset {
                     self.performLifecycleAction(self.lifecycle.mediaServicesWereReset())
                 } else {

@@ -27,3 +27,6 @@ fastlane/test_output/
 *.mobileprovision
 *.p12
 *.cer
+
+# 本机专属环境记录，不进仓库
+docs/开发环境.md
