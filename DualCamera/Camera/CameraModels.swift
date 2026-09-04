@@ -366,6 +366,29 @@ enum TorchMode: String, CaseIterable, Identifiable {
     }
 }
 
+/// 界面的拍摄模式。只决定主按键执行拍照还是录像，
+/// 不改变会话的建图时机——会话仍在真正开始录制时才切换到视频模式。
+enum ShootingMode: String, CaseIterable, Identifiable {
+    case photo
+    case video
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .photo: "照片"
+        case .video: "视频"
+        }
+    }
+
+    var accessibilityIdentifier: String {
+        switch self {
+        case .photo: "mode-photo"
+        case .video: "mode-video"
+        }
+    }
+}
+
 /// 后摄对焦与测光的锁定状态。
 enum FocusLockState: Equatable {
     case automatic

@@ -231,7 +231,9 @@ final class MediaSaveCoordinatorTests: XCTestCase {
     }
 
     func testVideoRemainsActiveUntilRecoveryCompletionReturns() {
-        let coordinator = MediaSaveCoordinator()
+        // 注入工作队列，以便在完成回调返回后确定性地等待协调器释放任务。
+        let workQueue = DispatchQueue(label: "media-save-active-during-completion")
+        let coordinator = MediaSaveCoordinator(workQueue: workQueue)
         let url = URL(fileURLWithPath: "/tmp/active-during-completion-\(UUID().uuidString).mov")
         let id = MediaSaveJobID.video(url)
         let observed = expectation(description: "完成回调执行期间仍计入 active")
@@ -247,6 +249,11 @@ final class MediaSaveCoordinatorTests: XCTestCase {
         ))
 
         wait(for: [observed], timeout: 1)
+
+        // fulfill 发生在完成回调内部，此时协调器尚未释放任务——这正是本用例要
+        // 验证的语义。释放紧接着在同一条串行工作队列上执行，因此同步排空该队列
+        // 即可确定性地等到释放完成，不必依赖轮询。
+        workQueue.sync {}
         XCTAssertFalse(coordinator.contains(id))
     }
 

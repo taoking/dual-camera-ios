@@ -11,6 +11,8 @@ struct CameraControlsView: View {
                     .padding(.top, 12)
             }
             Spacer()
+            modeSelector
+                .padding(.bottom, 14)
             controls
         }
         .padding(.top, 12)
@@ -135,44 +137,85 @@ struct CameraControlsView: View {
         .accessibilityIdentifier("settings-menu")
     }
 
+    /// 照片／视频模式切换。此前快门与录制是两个同屏按键，且录制中白快门会变成
+    /// 方块承担「停止」，一个控件承担了两种语义。改为单一主键后语义唯一。
+    private var modeSelector: some View {
+        HStack(spacing: 4) {
+            ForEach(ShootingMode.allCases) { mode in
+                let isSelected = camera.shootingMode == mode
+                Button {
+                    withAnimation(.easeInOut(duration: 0.16)) {
+                        camera.setShootingMode(mode)
+                    }
+                } label: {
+                    Text(mode.title)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(isSelected ? .black : .white)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 7)
+                        .background(isSelected ? Color.white : Color.clear, in: Capsule())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier(mode.accessibilityIdentifier)
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
+            }
+        }
+        .padding(3)
+        .background(.black.opacity(0.42), in: Capsule())
+        .opacity(camera.isRecording ? 0 : 1)
+        .disabled(camera.isRecording || camera.isCapturing || camera.countdownRemaining > 0)
+        .accessibilityHidden(camera.isRecording)
+    }
+
     private var controls: some View {
         HStack(alignment: .center) {
             recentMediaControl
                 .frame(width: 68, height: 58)
             Spacer()
-            Button(action: primaryAction) {
-                ZStack {
-                    Circle().stroke(.white, lineWidth: 5).frame(width: 76, height: 76)
-                    if camera.isRecording {
-                        RoundedRectangle(cornerRadius: 8).fill(.red).frame(width: 34, height: 34)
-                    } else {
-                        Circle().fill(.white).frame(width: 62, height: 62).scaleEffect(camera.isCapturing ? 0.78 : 1)
-                    }
-                }
-            }
-            .disabled((!camera.state.isReady || camera.isCapturing || camera.countdownRemaining > 0) && !camera.isRecording)
-            .accessibilityLabel(camera.isRecording ? "停止视频录制" : "同时拍摄前后摄像头")
-            .accessibilityIdentifier("photo-shutter")
+            shutterButton
             Spacer()
-            Button(action: camera.startRecording) {
-                ZStack {
-                    Circle().stroke(.white.opacity(0.85), lineWidth: 2).frame(width: 48, height: 48)
-                    Circle().fill(.red).frame(width: 18, height: 18)
-                }
-            }
-            .disabled(
-                !camera.state.isReady
-                    || camera.isCapturing
-                    || camera.videoState.preventsNewRecording
-                    || camera.countdownRemaining > 0
-            )
-            .accessibilityLabel("开始双摄视频录制")
-            .accessibilityIdentifier("video-record")
+            // 与左侧缩略图等宽的占位，保证主键居中。
+            Color.clear.frame(width: 68, height: 58)
         }
         .padding(.horizontal, 28)
         .padding(.vertical, 10)
         .background(.black.opacity(0.3), in: Capsule())
         .padding(.horizontal, 18)
+    }
+
+    private var shutterButton: some View {
+        Button(action: camera.triggerPrimaryAction) {
+            ZStack {
+                Circle().stroke(.white, lineWidth: 5).frame(width: 76, height: 76)
+                if camera.isRecording {
+                    RoundedRectangle(cornerRadius: 8).fill(.red).frame(width: 34, height: 34)
+                } else if camera.shootingMode == .video {
+                    Circle().fill(.red).frame(width: 62, height: 62)
+                } else {
+                    Circle().fill(.white).frame(width: 62, height: 62)
+                        .scaleEffect(camera.isCapturing ? 0.78 : 1)
+                }
+            }
+        }
+        .disabled(isShutterDisabled)
+        .accessibilityLabel(shutterAccessibilityLabel)
+        .accessibilityIdentifier("shutter")
+    }
+
+    private var isShutterDisabled: Bool {
+        if camera.isRecording { return false }
+        if !camera.state.isReady || camera.isCapturing { return true }
+        if camera.shootingMode == .video {
+            return camera.videoState.preventsNewRecording || camera.countdownRemaining > 0
+        }
+        // 照片模式下倒计时中仍可点按，此时代表取消。
+        return false
+    }
+
+    private var shutterAccessibilityLabel: String {
+        if camera.isRecording { return "停止视频录制" }
+        if camera.countdownRemaining > 0 { return "取消倒计时" }
+        return camera.shootingMode == .video ? "开始双摄视频录制" : "同时拍摄前后摄像头"
     }
 
     /// 显示等效焦距倍率，与镜头菜单的 0.5×／1× 标注同口径；
@@ -312,11 +355,4 @@ struct CameraControlsView: View {
         }
     }
 
-    private func primaryAction() {
-        if camera.isRecording {
-            camera.stopRecording()
-        } else {
-            camera.capturePhoto()
-        }
-    }
 }

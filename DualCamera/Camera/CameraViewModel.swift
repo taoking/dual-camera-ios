@@ -38,6 +38,8 @@ final class CameraViewModel: ObservableObject {
     @Published private(set) var captureQuality: CaptureQuality
     @Published var gridEnabled: Bool
     @Published private(set) var countdownRemaining = 0
+    /// 主按键当前执行拍照还是录像。录制或拍摄进行中不允许切换。
+    @Published private(set) var shootingMode: ShootingMode = .photo
 
     private var cancellables = Set<AnyCancellable>()
     private var countdownTask: Task<Void, Never>?
@@ -123,6 +125,26 @@ final class CameraViewModel: ObservableObject {
 
     func selectRearCamera(_ option: RearCameraOption) {
         sessionController.selectRearCamera(option)
+    }
+
+    func setShootingMode(_ mode: ShootingMode) {
+        guard !isRecording, !isCapturing, countdownRemaining == 0 else { return }
+        guard mode != shootingMode else { return }
+        shootingMode = mode
+    }
+
+    /// 主按键。按模式分派，录制中一律表示停止。
+    func triggerPrimaryAction() {
+        if isRecording {
+            stopRecording()
+            return
+        }
+        switch shootingMode {
+        case .photo:
+            capturePhoto()
+        case .video:
+            startRecording()
+        }
     }
 
     func toggleTorch() {

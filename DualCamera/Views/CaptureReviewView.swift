@@ -11,9 +11,7 @@ struct CaptureReviewView: View {
     var body: some View {
         ZStack(alignment: .topTrailing) {
             Color.black.ignoresSafeArea()
-            Image(uiImage: photoSet.composedImage)
-                .resizable()
-                .scaledToFit()
+            ZoomableImageView(image: photoSet.composedImage, onDismiss: onDismiss)
                 .padding(18)
 
             Button(action: onDismiss) {

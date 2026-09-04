@@ -55,7 +55,9 @@ struct ContentView: View {
                     onAction: camera.performStatusAction
                 )
                     .padding(.horizontal, 24)
-                    .padding(.bottom, 126)
+                    // 必须避开底部控件：主键胶囊约 96、模式切换约 34，
+                    // 加上各自的外边距后提示条至少要抬到 180 才不遮挡模式切换。
+                    .padding(.bottom, 184)
             }
 
             if camera.countdownRemaining > 0 {
@@ -92,12 +94,15 @@ struct ContentView: View {
                         isSharePresented = true
                     }
                 )
+                .transition(.opacity.combined(with: .scale(scale: 0.96)))
             }
 
             if camera.isMediaReviewPresented, let videoURL = camera.latestVideoURL {
                 videoReview(url: videoURL)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
             }
         }
+        .animation(.easeInOut(duration: 0.22), value: camera.isMediaReviewPresented)
         .onAppear(perform: camera.start)
         .onDisappear(perform: camera.stop)
         .onChange(of: scenePhase) { _, newPhase in
