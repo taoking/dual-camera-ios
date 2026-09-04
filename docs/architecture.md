@@ -33,6 +33,8 @@ flowchart LR
 - `MediaSaveCoordinator`：在独立 utility 队列执行媒体保存工作，以照片 UUID 或视频 URL 为任务 ID 去重，并将结果回传给 Controller。已接受任务会强持有协调器，同一 ID 的互斥一直保持到 PhotoKit 真实回调；不使用本地超时释放，避免不可取消的底层任务与重试重复写入。
 - `MediaRecoveryStore`：在当前进程内强持有未成功完成照片的完整保存操作，上限为 5 个；视频把标准化 `.mov` 路径写入 `UserDefaults`，使 Controller 重建后仍能发现失败文件。它还将 failed 路径与正在保存的 URL 去重合并，为新录像提供 5 个／1 GiB 的容量闸门。
 - `CameraNoticePolicy`：阻止较低优先级提示覆盖尚未处理的可操作错误；恢复优先级为重试 Session、打开设置、重试媒体，按钮执行时只按该条提示的唯一 ID 消费。
+- `CameraNoticeCenter`：拥有提示状态与发布时序（唯一 ID 消费、按媒体任务解除、无操作提示的自动消失）。判定仍交给 `CameraNoticePolicy`；自动消失的调度器可注入以便测试。Controller 负责从 sessionQueue 切到主队列后再转交。
+- `RecentMediaState`：最近媒体排序与视频去留的纯状态机，不接触 AVFoundation、PhotoKit、文件系统与界面。单调排序闸门、视频 saving/saved/failed 的去留决策、失败视频只自动重试一次、跨进程恢复的待删记账都在这里，因此可直接做单元测试。Controller 在 sessionQueue 上独占持有它，并把决策翻译成实际的删除、入队与发布动作。
 - `PhotoLibraryService`：通过可注入的 `PhotoLibraryClient` 使用 add-only 权限并一次性写入资源；测试不调用真实 PhotoKit。
 - `CameraPreferences`：注入 `UserDefaults`，测试 Suite 不污染用户设置。
 

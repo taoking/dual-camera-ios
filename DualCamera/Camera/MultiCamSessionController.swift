@@ -3,12 +3,6 @@ import Combine
 import CoreMedia
 import UIKit
 
-private enum VideoSaveStatus {
-    case saving
-    case saved
-    case failed
-}
-
 /// 持有 MultiCam Session、协调照片/视频模式，并把结构化状态发布给 ViewModel。
 /// 所有 AVFoundation 会话和设备修改均在 sessionQueue 串行执行。
 final class MultiCamSessionController: NSObject, ObservableObject {
@@ -86,16 +80,11 @@ final class MultiCamSessionController: NSObject, ObservableObject {
     private var recordingStartedAtUptime: TimeInterval?
     private var recordingAuthorizationPending = false
     private var fakeRecordingActive = false
-    private var recentPhotoSet: CapturedPhotoSet?
-    private var recentVideoURL: URL?
-    private var latestMediaJobID: MediaSaveJobID?
-    private var mediaSequence: UInt64 = 0
-    private var recentMediaSequence: UInt64 = 0
+    /// 最近媒体的排序与视频去留判断。纯状态机，便于直接测试；
+    /// 只在 sessionQueue 上访问。
+    private var recentMedia = RecentMediaState()
     private var activeRecordingMediaSequence: UInt64?
     private var activeRecordingURL: URL?
-    private var videoURLsPendingDeletion = Set<URL>()
-    private var videoSaveStatuses = [URL: VideoSaveStatus]()
-    private var videoAutoRetryAttempted = Set<URL>()
 
     override init() {
         let multiCamSession = AVCaptureMultiCamSession()
@@ -430,14 +419,14 @@ final class MultiCamSessionController: NSObject, ObservableObject {
 
     func saveLatestPhoto() {
         sessionQueue.async { [weak self] in
-            guard let self, let photoSet = self.recentPhotoSet else { return }
+            guard let self, let photoSet = self.recentMedia.recentPhotoSet else { return }
             self.enqueuePhotoSaveLocked(photoSet, mode: photoSet.saveMode)
         }
     }
 
     func saveLatestVideo() {
         sessionQueue.async { [weak self] in
-            guard let self, let url = self.recentVideoURL else { return }
+            guard let self, let url = self.recentMedia.recentVideoURL else { return }
             self.enqueueVideoSaveLocked(url)
         }
     }
@@ -656,7 +645,7 @@ final class MultiCamSessionController: NSObject, ObservableObject {
             if isControllerStopping {
                 // 页面已退出但 finishWriting 才返回：仍完成后台保存，成功后清理，
                 // 不再把这个视频发布到已经离开的界面。
-                videoURLsPendingDeletion.insert(url)
+                recentMedia.markVideoPendingDeletion(url)
                 publishVideoState(.idle)
                 enqueueVideoSaveLocked(url)
                 return
@@ -668,7 +657,7 @@ final class MultiCamSessionController: NSObject, ObservableObject {
             if !becameRecent {
                 // 用户在 finishWriting 期间拍了更新的照片；旧视频仍保存，
                 // 但不回退最近媒体，且只在保存成功后清理临时文件。
-                videoURLsPendingDeletion.insert(url)
+                recentMedia.markVideoPendingDeletion(url)
             }
             publishVideoState(.preview)
             enqueueVideoSaveLocked(url)
@@ -903,7 +892,7 @@ final class MultiCamSessionController: NSObject, ObservableObject {
             }
         )
         if didEnqueue {
-            videoSaveStatuses[url] = .saving
+            recentMedia.markVideoSaving(url)
             publishMediaSaveState(.saving, for: id)
         }
     }
@@ -914,7 +903,7 @@ final class MultiCamSessionController: NSObject, ObservableObject {
     ) {
         // 旧媒体可在新拍摄之后才完成保存。它仍需要做资源收尾，
         // 但不应用旧结果覆盖当前缩略图的状态、提示或触感。
-        let isLatestMedia = latestMediaJobID == id
+        let isLatestMedia = recentMedia.isLatest(id)
         switch result {
         case .success:
             resolveMediaNotice(for: id)
@@ -956,19 +945,15 @@ final class MultiCamSessionController: NSObject, ObservableObject {
         }
 
         if case .video(let url) = id {
-            switch result {
-            case .success:
-                videoSaveStatuses[url] = .saved
-                videoAutoRetryAttempted.remove(url)
-                if videoURLsPendingDeletion.remove(url) != nil {
-                    videoCoordinator.discard(url: url)
-                    videoSaveStatuses.removeValue(forKey: url)
-                }
-            case .failure:
-                // 保留唯一的 .mov：当它已被更新媒体替换时，下次回到
-                // active 会再尝试保存；当它仍是最近媒体时，查看页也可手动重试。
-                videoSaveStatuses[url] = .failed
+            // 失败时保留唯一的 .mov：已被更新媒体替换的，下次回到 active 会再试；
+            // 仍是最近媒体的，查看页可手动重试。
+            switch recentMedia.completeVideoSave(url, succeeded: result.isSuccess) {
+            case .discardFile:
+                videoCoordinator.discard(url: url)
+            case .scheduleAutoRetry:
                 scheduleOneVideoRetryIfNeededLocked(url)
+            case .keepFile, .awaitManualRetry:
+                break
             }
         }
     }
@@ -977,13 +962,10 @@ final class MultiCamSessionController: NSObject, ObservableObject {
         withPhoto photoSet: CapturedPhotoSet,
         mediaSequence: UInt64
     ) {
-        guard mediaSequence >= recentMediaSequence else { return }
-        let previousVideoURL = recentVideoURL
-        recentMediaSequence = mediaSequence
-        recentPhotoSet = photoSet
-        recentVideoURL = nil
-        latestMediaJobID = .photo(photoSet.id)
-        if let previousVideoURL {
+        guard let replacement = recentMedia.replace(withPhoto: photoSet, sequence: mediaSequence) else {
+            return
+        }
+        if let previousVideoURL = replacement.previousVideoURL {
             discardVideoWhenSafeLocked(previousVideoURL)
         }
         DispatchQueue.main.async { [weak self] in
@@ -998,13 +980,10 @@ final class MultiCamSessionController: NSObject, ObservableObject {
         withVideo url: URL,
         mediaSequence: UInt64
     ) -> Bool {
-        guard mediaSequence >= recentMediaSequence else { return false }
-        let previousVideoURL = recentVideoURL
-        recentMediaSequence = mediaSequence
-        recentPhotoSet = nil
-        recentVideoURL = url
-        latestMediaJobID = .video(url)
-        if let previousVideoURL, previousVideoURL != url {
+        guard let replacement = recentMedia.replace(withVideo: url, sequence: mediaSequence) else {
+            return false
+        }
+        if let previousVideoURL = replacement.previousVideoURL {
             discardVideoWhenSafeLocked(previousVideoURL)
         }
         DispatchQueue.main.async { [weak self] in
@@ -1016,36 +995,26 @@ final class MultiCamSessionController: NSObject, ObservableObject {
     }
 
     private func discardVideoWhenSafeLocked(_ url: URL) {
-        switch videoSaveStatuses[url] {
-        case .saving:
-            videoURLsPendingDeletion.insert(url)
-        case .failed:
-            // 该失败视频即将从“最近媒体”移出，先保留文件并自动再试，
-            // 避免用户失去唯一可重试入口后只留下无主缓存。
-            videoURLsPendingDeletion.insert(url)
+        let disposition = recentMedia.videoDisposition(
+            for: url,
+            isRecoverable: mediaRecoveryStore.isRecoverableVideo(url)
+        )
+        switch disposition {
+        case .deferUntilSaved:
+            break
+        case .retainAndRetry:
             enqueueVideoSaveLocked(url)
-        case .saved:
-            mediaRecoveryStore.removeVideo(url)
-            videoSaveStatuses.removeValue(forKey: url)
-            videoCoordinator.discard(url: url)
-        case nil:
-            if mediaRecoveryStore.isRecoverableVideo(url) {
-                videoSaveStatuses[url] = .failed
-                videoURLsPendingDeletion.insert(url)
-                enqueueVideoSaveLocked(url)
-            } else {
-                videoCoordinator.discard(url: url)
+        case .deleteNow(let clearRecoveryIndex):
+            if clearRecoveryIndex {
+                mediaRecoveryStore.removeVideo(url)
             }
+            videoCoordinator.discard(url: url)
         }
     }
 
     private func releaseRecentVideoOnStopLocked() {
-        guard let url = recentVideoURL else { return }
+        guard let url = recentMedia.releaseRecentVideoOnStop() else { return }
         discardVideoWhenSafeLocked(url)
-        recentVideoURL = nil
-        if latestMediaJobID == .video(url) {
-            latestMediaJobID = nil
-        }
         DispatchQueue.main.async { [weak self] in
             self?.latestVideoURL = nil
         }
@@ -1060,34 +1029,30 @@ final class MultiCamSessionController: NSObject, ObservableObject {
         for url in mediaRecoveryStore.recoverableVideos() {
             guard FileManager.default.fileExists(atPath: url.path) else {
                 mediaRecoveryStore.removeVideo(url)
-                videoSaveStatuses.removeValue(forKey: url)
-                videoURLsPendingDeletion.remove(url)
+                recentMedia.forgetVideo(url)
                 continue
             }
-            videoSaveStatuses[url] = mediaSaveCoordinator.contains(.video(url)) ? .saving : .failed
-            if url != recentVideoURL {
-                videoURLsPendingDeletion.insert(url)
-            }
-            guard !mediaSaveCoordinator.contains(.video(url)) else { continue }
+            let isEnqueued = mediaSaveCoordinator.contains(.video(url))
+            recentMedia.rediscoverVideo(url, isEnqueued: isEnqueued)
+            guard !isEnqueued else { continue }
             enqueueVideoSaveLocked(url)
         }
     }
 
+    /// 只由 `RecentMediaState.completeVideoSave` 返回 `.scheduleAutoRetry` 时调用——
+    /// 是否该重试、以及每个文件只自动重试一次，都已在那里判定。
     private func scheduleOneVideoRetryIfNeededLocked(_ url: URL) {
-        guard videoURLsPendingDeletion.contains(url),
-              videoAutoRetryAttempted.insert(url).inserted else { return }
         sessionQueue.asyncAfter(deadline: .now() + 2) { [weak self] in
+            // 两秒内状态可能已经改变，执行前再复核一次。
             guard let self,
-                  self.videoURLsPendingDeletion.contains(url),
-                  self.videoSaveStatuses[url] == .failed,
+                  self.recentMedia.shouldRunScheduledRetry(for: url),
                   FileManager.default.fileExists(atPath: url.path) else { return }
             self.enqueueVideoSaveLocked(url)
         }
     }
 
     private func nextMediaSequenceLocked() -> UInt64 {
-        mediaSequence &+= 1
-        return mediaSequence
+        recentMedia.nextSequence()
     }
 
     private func performLifecycleAction(_ action: CameraLifecycleAction) {
@@ -1171,7 +1136,7 @@ final class MultiCamSessionController: NSObject, ObservableObject {
             in: cacheDirectory,
             filenamePrefix: Self.videoCacheFilenamePrefix,
             activeVideoURLs: mediaSaveCoordinator.activeVideoURLs,
-            recentVideoURL: recentVideoURL,
+            recentVideoURL: recentMedia.recentVideoURL,
             olderThan: cutoff
         )
         for url in orphanedURLs {
@@ -1180,7 +1145,7 @@ final class MultiCamSessionController: NSObject, ObservableObject {
                     url,
                     filenamePrefix: Self.videoCacheFilenamePrefix,
                     activeVideoURLs: mediaSaveCoordinator.activeVideoURLs,
-                    recentVideoURL: recentVideoURL,
+                    recentVideoURL: recentMedia.recentVideoURL,
                     olderThan: cutoff
                 )
                 if removed {
@@ -1373,7 +1338,7 @@ final class MultiCamSessionController: NSObject, ObservableObject {
     }
 
     private func publishMediaSaveState(_ newState: MediaSaveState, for id: MediaSaveJobID) {
-        guard latestMediaJobID == id else { return }
+        guard recentMedia.isLatest(id) else { return }
         DispatchQueue.main.async { [weak self] in
             self?.mediaSaveState = newState
         }
