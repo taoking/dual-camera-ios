@@ -24,15 +24,37 @@ final class FakeCameraUITests: XCTestCase {
         XCTAssertTrue(app.buttons["photo-shutter"].isEnabled)
     }
 
+    /// 倒计时中点按应立即取消，且不产生任何媒体。
+    func testCountdownCanBeCancelledBeforeCapture() {
+        launch()
+        tapTopMenu("settings-menu")
+        app.buttons["10 秒"].tap()
+        app.buttons["photo-shutter"].tap()
+
+        let countdown = app.buttons["countdown-cancel"]
+        XCTAssertTrue(countdown.waitForExistence(timeout: 2))
+        countdown.tap()
+
+        let disappeared = expectation(
+            for: NSPredicate(format: "exists == false"),
+            evaluatedWith: countdown
+        )
+        wait(for: [disappeared], timeout: 3)
+        XCTAssertFalse(
+            app.buttons["recent-media"].exists,
+            "取消倒计时后不应产生任何媒体"
+        )
+        XCTAssertTrue(app.buttons["photo-shutter"].isEnabled)
+    }
+
     func testCountdownCaptureReviewShareAndClose() {
         app.launchArguments.append("-fakeMediaSaveDelay")
         launch()
         tapTopMenu("settings-menu")
         app.buttons["3 秒"].tap()
         app.buttons["photo-shutter"].tap()
-        let countdown = app.staticTexts.matching(
-            NSPredicate(format: "label BEGINSWITH %@", "倒计时")
-        ).firstMatch
+        // 倒计时现在是可点按取消的整屏按钮，不再是单纯的文本。
+        let countdown = app.buttons["countdown-cancel"]
         XCTAssertTrue(countdown.waitForExistence(timeout: 1.5))
 
         let recentMedia = app.buttons["recent-media"]

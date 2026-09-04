@@ -8,6 +8,9 @@ import UIKit
 final class MultiCamSessionController: NSObject, ObservableObject {
     private static let videoCacheFilenamePrefix = "DualCamera-"
     private static let orphanVideoMinimumAge: TimeInterval = 5 * 60
+    /// 缩放上限。超出光学范围后是纯数码裁切，画质下降明显，因此仍设上限，
+    /// 但 6 倍对 iPhone 16 Pro 的长焦过于保守。
+    private static let maximumZoomFactor: CGFloat = 12
     private static let orphanCleanupLock = NSLock()
     private static var didClaimOrphanCleanup = false
 
@@ -24,6 +27,15 @@ final class MultiCamSessionController: NSObject, ObservableObject {
     @Published private(set) var selectedRearCamera: RearCameraOption = .wide
     @Published private(set) var diagnostics = CameraDiagnostics.empty
     @Published private(set) var zoomFactor: CGFloat = 1
+    /// 界面显示用的等效倍率。`videoZoomFactor` 是相对当前镜头的倍数，
+    /// 超广角下它为 1.0 但实际视角是 0.5×，直接显示会与镜头菜单自相矛盾。
+    @Published private(set) var displayZoomFactor: CGFloat = 1
+    @Published private(set) var maximumDisplayZoomFactor: CGFloat = 1
+    @Published private(set) var isTorchAvailable = false
+    @Published private(set) var torchMode: TorchMode = .off
+    @Published private(set) var focusLockState: FocusLockState = .automatic
+    @Published private(set) var exposureBias: Float = 0
+    @Published private(set) var exposureBiasRange: ClosedRange<Float> = 0...0
     @Published private(set) var isFakeCamera = ProcessInfo.processInfo.arguments.contains("-fakeCamera")
 
     let session: AVCaptureMultiCamSession
@@ -76,6 +88,9 @@ final class MultiCamSessionController: NSObject, ObservableObject {
     /// 换镜头则必须重置，因为不同镜头的缩放范围与等效视角都不同。
     private var preservedZoomFactor: CGFloat = 1
     private var preservedZoomRearCamera: RearCameraOption?
+    /// 当前镜头相对广角的等效倍率，用于把设备缩放换算成界面读数。
+    private var displayZoomMultiplier: CGFloat = 1
+    private var desiredTorchMode: TorchMode = .off
     private var recordingTimer: Timer?
     private var recordingStartedAtUptime: TimeInterval?
     private var recordingAuthorizationPending = false
@@ -131,6 +146,9 @@ final class MultiCamSessionController: NSObject, ObservableObject {
         // StateObject 时，尚未执行的 weak 闭包会直接丢弃最后一段视频。
         sessionQueue.async {
             self.isControllerStopping = true
+            // 手电筒是设备级状态，离开界面后不应继续亮着。
+            self.desiredTorchMode = .off
+            self.applyTorchLocked()
             _ = self.lifecycle.requestStop(sessionIsRunning: self.isSessionRunning)
             self.stopSessionLocked(finishRecording: true)
             self.releaseRecentVideoOnStopLocked()
@@ -325,6 +343,10 @@ final class MultiCamSessionController: NSObject, ObservableObject {
                         device.exposureMode = .continuousAutoExposure
                     }
                 }
+                // 重新点选测光点意味着放弃此前的锁定与曝光补偿。
+                device.setExposureTargetBias(0)
+                self.publishFocusLock(.automatic)
+                self.publishExposureBias(0)
             } catch {
                 self.publishNotice(message: "无法设置对焦：\(error.localizedDescription)", kind: .error)
             }
@@ -347,7 +369,7 @@ final class MultiCamSessionController: NSObject, ObservableObject {
                 try device.lockForConfiguration()
                 defer { device.unlockForConfiguration() }
                 let base = self.zoomGestureBaseFactor ?? device.videoZoomFactor
-                let maximum = min(device.maxAvailableVideoZoomFactor, 6)
+                let maximum = min(device.maxAvailableVideoZoomFactor, Self.maximumZoomFactor)
                 let value = min(max(base * scale, device.minAvailableVideoZoomFactor), maximum)
                 device.videoZoomFactor = value
                 self.preservedZoomFactor = value
@@ -360,6 +382,55 @@ final class MultiCamSessionController: NSObject, ObservableObject {
 
     func endZoomGesture() {
         sessionQueue.async { [weak self] in self?.zoomGestureBaseFactor = nil }
+    }
+
+    func setTorch(_ mode: TorchMode) {
+        sessionQueue.async { [weak self] in
+            guard let self else { return }
+            self.desiredTorchMode = mode
+            self.applyTorchLocked()
+        }
+    }
+
+    /// 对焦与测光锁定。再次点按画面即可解除，与系统相机一致。
+    func toggleFocusLock() {
+        sessionQueue.async { [weak self] in
+            guard let self, let device = self.backDevice else { return }
+            let shouldLock = self.focusLockState == .automatic
+            do {
+                try device.lockForConfiguration()
+                defer { device.unlockForConfiguration() }
+                if shouldLock {
+                    if device.isFocusModeSupported(.locked) { device.focusMode = .locked }
+                    if device.isExposureModeSupported(.locked) { device.exposureMode = .locked }
+                } else {
+                    if device.isFocusModeSupported(.continuousAutoFocus) {
+                        device.focusMode = .continuousAutoFocus
+                    }
+                    if device.isExposureModeSupported(.continuousAutoExposure) {
+                        device.exposureMode = .continuousAutoExposure
+                    }
+                }
+                self.publishFocusLock(shouldLock ? .locked : .automatic)
+            } catch {
+                self.publishNotice(message: "无法切换对焦锁定：\(error.localizedDescription)", kind: .error)
+            }
+        }
+    }
+
+    func setExposureBias(_ value: Float) {
+        sessionQueue.async { [weak self] in
+            guard let self, let device = self.backDevice else { return }
+            let clamped = min(max(value, device.minExposureTargetBias), device.maxExposureTargetBias)
+            do {
+                try device.lockForConfiguration()
+                defer { device.unlockForConfiguration() }
+                device.setExposureTargetBias(clamped)
+                self.publishExposureBias(clamped)
+            } catch {
+                self.publishNotice(message: "无法调整曝光：\(error.localizedDescription)", kind: .error)
+            }
+        }
     }
 
     /// 仅更新拍摄内存快照，不持久化、不入 Session Queue 做镜像工作。
@@ -495,12 +566,28 @@ final class MultiCamSessionController: NSObject, ObservableObject {
         supportedRearCameras = configuration.supportedRearCameras
         isConfigured = true
         publishRearCameras(configuration.supportedRearCameras, selected: configuration.selectedRearCamera)
+        // 倍率换算必须在发布缩放之前更新，否则第一条读数会用上一颗镜头的倍率。
+        displayZoomMultiplier = displayMultiplier(
+            for: configuration.backDevice,
+            option: configuration.selectedRearCamera
+        )
         if preservedZoomRearCamera == configuration.selectedRearCamera {
             restoreZoom(preservedZoomFactor, for: configuration.backDevice)
         } else {
             resetZoom(for: configuration.backDevice)
         }
         preservedZoomRearCamera = configuration.selectedRearCamera
+        publishZoomRange(
+            maximumDisplay: min(configuration.backDevice.maxAvailableVideoZoomFactor, Self.maximumZoomFactor)
+                * displayZoomMultiplier
+        )
+        publishExposureBiasRange(
+            configuration.backDevice.minExposureTargetBias...configuration.backDevice.maxExposureTargetBias
+        )
+        publishExposureBias(0)
+        publishFocusLock(.automatic)
+        // 手电筒与曝光补偿都是设备级状态，重建后会回到默认值。
+        applyTorchLocked()
         pressureThrottled = false
         runtimeMonitor.observePressure(back: configuration.backDevice, front: configuration.frontDevice)
         publishDiagnostics()
@@ -1175,6 +1262,44 @@ final class MultiCamSessionController: NSObject, ObservableObject {
         applyZoomLocked(factor, to: device)
     }
 
+    /// 手电筒是设备级属性，重建 Session 后会回到 off，必须重新施加。
+    private func applyTorchLocked() {
+        guard let device = backDevice else { return }
+        let available = device.hasTorch && device.isTorchAvailable
+        publishTorchAvailability(available)
+        guard available else {
+            if desiredTorchMode != .off {
+                publishTorchMode(.off)
+                desiredTorchMode = .off
+            }
+            return
+        }
+        do {
+            try device.lockForConfiguration()
+            defer { device.unlockForConfiguration() }
+            device.torchMode = desiredTorchMode == .on ? .on : .off
+            publishTorchMode(desiredTorchMode)
+        } catch {
+            publishNotice(message: "无法切换补光：\(error.localizedDescription)", kind: .error)
+            desiredTorchMode = .off
+            publishTorchMode(.off)
+        }
+    }
+
+    /// 当前镜头相对广角的等效倍率。iOS 18 起系统直接给出该值；
+    /// 更早的系统按镜头类型回退到近似值，只影响读数不影响成像。
+    private func displayMultiplier(for device: AVCaptureDevice, option: RearCameraOption) -> CGFloat {
+        if #available(iOS 18.0, *) {
+            let multiplier = device.displayVideoZoomFactorMultiplier
+            if multiplier > 0 { return multiplier }
+        }
+        switch option {
+        case .ultraWide: return 0.5
+        case .wide: return 1
+        case .telephoto: return 2
+        }
+    }
+
     private func applyZoomLocked(_ factor: CGFloat, to device: AVCaptureDevice) {
         zoomGestureBaseFactor = nil
         do {
@@ -1373,7 +1498,35 @@ final class MultiCamSessionController: NSObject, ObservableObject {
     }
 
     private func publishZoom(_ value: CGFloat) {
-        DispatchQueue.main.async { [weak self] in self?.zoomFactor = value }
+        let display = value * displayZoomMultiplier
+        DispatchQueue.main.async { [weak self] in
+            self?.zoomFactor = value
+            self?.displayZoomFactor = display
+        }
+    }
+
+    private func publishZoomRange(maximumDisplay: CGFloat) {
+        DispatchQueue.main.async { [weak self] in self?.maximumDisplayZoomFactor = maximumDisplay }
+    }
+
+    private func publishTorchAvailability(_ available: Bool) {
+        DispatchQueue.main.async { [weak self] in self?.isTorchAvailable = available }
+    }
+
+    private func publishTorchMode(_ mode: TorchMode) {
+        DispatchQueue.main.async { [weak self] in self?.torchMode = mode }
+    }
+
+    private func publishFocusLock(_ state: FocusLockState) {
+        DispatchQueue.main.async { [weak self] in self?.focusLockState = state }
+    }
+
+    private func publishExposureBias(_ value: Float) {
+        DispatchQueue.main.async { [weak self] in self?.exposureBias = value }
+    }
+
+    private func publishExposureBiasRange(_ range: ClosedRange<Float>) {
+        DispatchQueue.main.async { [weak self] in self?.exposureBiasRange = range }
     }
 
     private func publishNotice(

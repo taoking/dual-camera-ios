@@ -343,6 +343,35 @@ enum CaptureQuality: String, CaseIterable, Identifiable, Codable {
     var title: String { self == .fast ? "快速" : "均衡" }
 }
 
+/// 补光模式。MultiCam 会话下照片闪光灯通常不可用，但手电筒是设备级属性，
+/// 前后摄并发时依然能开，因此这里以「常亮补光」而非「拍照闪光」为准。
+enum TorchMode: String, CaseIterable, Identifiable {
+    case off
+    case on
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .off: "关闭"
+        case .on: "常亮"
+        }
+    }
+
+    var symbolName: String {
+        switch self {
+        case .off: "bolt.slash.fill"
+        case .on: "bolt.fill"
+        }
+    }
+}
+
+/// 后摄对焦与测光的锁定状态。
+enum FocusLockState: Equatable {
+    case automatic
+    case locked
+}
+
 struct CapturedSourcePhoto {
     /// 相机输出的文件数据；只有系统未提供时才允许保存层回退为 JPEG 重编码。
     let originalData: Data?

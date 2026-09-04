@@ -21,6 +21,9 @@ struct CameraControlsView: View {
         HStack(spacing: 10) {
             rearCameraMenu
             layoutMenu
+            if camera.isTorchAvailable {
+                torchButton
+            }
             Spacer()
             settingsMenu
             Text(zoomLabel)
@@ -172,8 +175,24 @@ struct CameraControlsView: View {
         .padding(.horizontal, 18)
     }
 
+    /// 显示等效焦距倍率，与镜头菜单的 0.5×／1× 标注同口径；
+    /// 直接显示 videoZoomFactor 会在超广角下读出 1.0× 而与菜单自相矛盾。
     private var zoomLabel: String {
-        String(format: "%.1f×", camera.zoomFactor)
+        let value = camera.displayZoomFactor
+        return value < 10
+            ? String(format: "%.1f×", value)
+            : String(format: "%.0f×", value)
+    }
+
+    private var torchButton: some View {
+        Button(action: camera.toggleTorch) {
+            Image(systemName: camera.torchMode.symbolName)
+                .foregroundStyle(camera.torchMode == .on ? .yellow : .white)
+                .padding(9)
+                .background(.black.opacity(0.34), in: Circle())
+        }
+        .accessibilityLabel(camera.torchMode == .on ? "关闭补光" : "开启补光")
+        .accessibilityIdentifier("torch-toggle")
     }
 
     private var recordingStatus: some View {

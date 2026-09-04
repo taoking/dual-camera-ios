@@ -21,6 +21,13 @@ final class CameraViewModel: ObservableObject {
     @Published private(set) var selectedRearCamera: RearCameraOption = .wide
     @Published private(set) var diagnostics = CameraDiagnostics.empty
     @Published private(set) var zoomFactor: CGFloat = 1
+    @Published private(set) var displayZoomFactor: CGFloat = 1
+    @Published private(set) var maximumDisplayZoomFactor: CGFloat = 1
+    @Published private(set) var isTorchAvailable = false
+    @Published private(set) var torchMode: TorchMode = .off
+    @Published private(set) var focusLockState: FocusLockState = .automatic
+    @Published private(set) var exposureBias: Float = 0
+    @Published private(set) var exposureBiasRange: ClosedRange<Float> = 0...0
     @Published private(set) var isFakeCamera = false
     @Published var showsPhotoPermissionSettings = false
     @Published private(set) var settingsAlertMessage = "请在系统设置中允许所需权限，然后重试。"
@@ -89,6 +96,10 @@ final class CameraViewModel: ObservableObject {
 
     func capturePhoto() {
         guard !isCapturing, state.isReady else { return }
+        guard countdownRemaining == 0 else {
+            cancelCountdown()
+            return
+        }
         countdownTask?.cancel()
         guard timerSeconds > 0 else {
             sessionController.capturePhoto()
@@ -112,6 +123,25 @@ final class CameraViewModel: ObservableObject {
 
     func selectRearCamera(_ option: RearCameraOption) {
         sessionController.selectRearCamera(option)
+    }
+
+    func toggleTorch() {
+        sessionController.setTorch(torchMode == .on ? .off : .on)
+    }
+
+    func toggleFocusLock() {
+        sessionController.toggleFocusLock()
+    }
+
+    func setExposureBias(_ value: Float) {
+        sessionController.setExposureBias(value)
+    }
+
+    /// 倒计时期间再次点按快门表示取消，而不是叠加一次新的拍摄。
+    func cancelCountdown() {
+        countdownTask?.cancel()
+        countdownTask = nil
+        countdownRemaining = 0
     }
 
     func setLayoutStyle(_ style: DualCameraLayoutStyle) {
@@ -294,6 +324,13 @@ final class CameraViewModel: ObservableObject {
         sessionController.$selectedRearCamera.receive(on: DispatchQueue.main).assign(to: &$selectedRearCamera)
         sessionController.$diagnostics.receive(on: DispatchQueue.main).assign(to: &$diagnostics)
         sessionController.$zoomFactor.receive(on: DispatchQueue.main).assign(to: &$zoomFactor)
+        sessionController.$displayZoomFactor.receive(on: DispatchQueue.main).assign(to: &$displayZoomFactor)
+        sessionController.$maximumDisplayZoomFactor.receive(on: DispatchQueue.main).assign(to: &$maximumDisplayZoomFactor)
+        sessionController.$isTorchAvailable.receive(on: DispatchQueue.main).assign(to: &$isTorchAvailable)
+        sessionController.$torchMode.receive(on: DispatchQueue.main).assign(to: &$torchMode)
+        sessionController.$focusLockState.receive(on: DispatchQueue.main).assign(to: &$focusLockState)
+        sessionController.$exposureBias.receive(on: DispatchQueue.main).assign(to: &$exposureBias)
+        sessionController.$exposureBiasRange.receive(on: DispatchQueue.main).assign(to: &$exposureBiasRange)
         sessionController.$isFakeCamera.receive(on: DispatchQueue.main).assign(to: &$isFakeCamera)
     }
 }

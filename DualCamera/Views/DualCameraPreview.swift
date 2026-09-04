@@ -14,6 +14,7 @@ struct DualCameraPreview: UIViewRepresentable {
     let onZoomBegan: () -> Void
     let onZoom: (CGFloat) -> Void
     let onZoomEnded: () -> Void
+    let onFocusLockToggle: () -> Void
 
     func makeUIView(context: Context) -> DualCameraPreviewView {
         let view = DualCameraPreviewView()
@@ -24,6 +25,7 @@ struct DualCameraPreview: UIViewRepresentable {
         view.onZoomBegan = onZoomBegan
         view.onZoom = onZoom
         view.onZoomEnded = onZoomEnded
+        view.onFocusLockToggle = onFocusLockToggle
         return view
     }
 
@@ -34,6 +36,7 @@ struct DualCameraPreview: UIViewRepresentable {
         uiView.onZoomBegan = onZoomBegan
         uiView.onZoom = onZoom
         uiView.onZoomEnded = onZoomEnded
+        uiView.onFocusLockToggle = onFocusLockToggle
         uiView.update(
             layout: layout,
             aspectRatio: aspectRatio,
@@ -64,6 +67,7 @@ final class DualCameraPreviewView: UIView {
     var onZoomBegan: (() -> Void)?
     var onZoom: ((CGFloat) -> Void)?
     var onZoomEnded: (() -> Void)?
+    var onFocusLockToggle: (() -> Void)?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -91,9 +95,13 @@ final class DualCameraPreviewView: UIView {
         let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
         let pinch = UIPinchGestureRecognizer(target: self, action: #selector(handlePinch(_:)))
         let tap = UITapGestureRecognizer(target: self, action: #selector(handleTap(_:)))
+        // 长按后摄画面锁定对焦与测光，与系统相机一致。
+        let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
+        longPress.minimumPressDuration = 0.6
         addGestureRecognizer(pan)
         addGestureRecognizer(pinch)
         addGestureRecognizer(tap)
+        addGestureRecognizer(longPress)
     }
 
     required init?(coder: NSCoder) {
@@ -205,6 +213,17 @@ final class DualCameraPreviewView: UIView {
         let devicePoint = backLayer?.captureDevicePointConverted(fromLayerPoint: point) ?? CGPoint(x: 0.5, y: 0.5)
         showFocusIndicator(at: point)
         onFocus?(devicePoint)
+    }
+
+    @objc private func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
+        guard gesture.state == .began else { return }
+        let point = gesture.location(in: self)
+        // 与点按对焦同样的命中范围：前摄画面不承接后摄的测光操作。
+        guard currentFrames.back.contains(point), !currentFrames.front.contains(point) else {
+            return
+        }
+        showFocusIndicator(at: point)
+        onFocusLockToggle?()
     }
 
     private func drawGrid(in canvas: CGRect) {

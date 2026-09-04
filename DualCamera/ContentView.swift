@@ -23,7 +23,8 @@ struct ContentView: View {
                 onFocus: camera.focusAndExpose,
                 onZoomBegan: camera.beginZoomGesture,
                 onZoom: camera.zoomBackCamera,
-                onZoomEnded: camera.endZoomGesture
+                onZoomEnded: camera.endZoomGesture,
+                onFocusLockToggle: camera.toggleFocusLock
             )
             .ignoresSafeArea()
 
@@ -37,6 +38,15 @@ struct ContentView: View {
 
             CameraControlsView(camera: camera)
 
+            if camera.exposureBiasRange.lowerBound < camera.exposureBiasRange.upperBound {
+                ExposureBiasSlider(
+                    value: camera.exposureBias,
+                    range: camera.exposureBiasRange,
+                    isLocked: camera.focusLockState == .locked,
+                    onChange: camera.setExposureBias
+                )
+            }
+
             VStack {
                 Spacer()
                 CameraStatusView(
@@ -49,11 +59,25 @@ struct ContentView: View {
             }
 
             if camera.countdownRemaining > 0 {
-                Text("\(camera.countdownRemaining)")
-                    .font(.system(size: 96, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-                    .shadow(radius: 8)
-                    .accessibilityLabel("倒计时 \(camera.countdownRemaining) 秒")
+                // 整屏可点：倒计时中最需要的操作就是立刻取消。
+                Button(action: camera.cancelCountdown) {
+                    ZStack {
+                        Color.black.opacity(0.001)
+                        VStack(spacing: 10) {
+                            Text("\(camera.countdownRemaining)")
+                                .font(.system(size: 96, weight: .bold, design: .rounded))
+                                .foregroundStyle(.white)
+                                .shadow(radius: 8)
+                            Text("点按取消")
+                                .font(.footnote.weight(.semibold))
+                                .foregroundStyle(.white.opacity(0.85))
+                        }
+                    }
+                }
+                .buttonStyle(.plain)
+                .ignoresSafeArea()
+                .accessibilityLabel("倒计时 \(camera.countdownRemaining) 秒，点按取消")
+                .accessibilityIdentifier("countdown-cancel")
             }
 
             if camera.isMediaReviewPresented, let photoSet = camera.latestPhotoSet {
