@@ -3,10 +3,21 @@ options:
   deploymentTarget:
     iOS: "17.0"
   groupSortPosition: top
+schemes:
+  DualCamera:
+    build:
+      targets:
+        DualCamera: all
+        DualCameraTests: [test]
+        DualCameraUITests: [test]
+    test:
+      targets:
+        - name: DualCameraTests
+        - name: DualCameraUITests
 settings:
   base:
     SWIFT_VERSION: "5.0"
-    PRODUCT_BUNDLE_IDENTIFIER: com.example.dualcamera
+    PRODUCT_BUNDLE_IDENTIFIER: com.yourcompany.dualcamera
 targets:
   DualCamera:
     type: application
@@ -19,5 +30,31 @@ targets:
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1"
         PRODUCT_NAME: "双摄相机"
+        PRODUCT_MODULE_NAME: DualCamera
         SUPPORTS_MACCATALYST: NO
-        SWIFT_STRICT_CONCURRENCY: minimal
+        SWIFT_STRICT_CONCURRENCY: targeted
+  DualCameraTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: DualCameraTests
+    dependencies:
+      - target: DualCamera
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yourcompany.dualcamera.tests
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/双摄相机.app/双摄相机"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+        GENERATE_INFOPLIST_FILE: YES
+  DualCameraUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: DualCameraUITests
+    dependencies:
+      - target: DualCamera
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yourcompany.dualcamera.uitests
+        TEST_TARGET_NAME: DualCamera
+        GENERATE_INFOPLIST_FILE: YES
