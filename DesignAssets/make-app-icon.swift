@@ -97,7 +97,12 @@ func draw(variant: Variant) -> CGImage {
     let white = foregroundColor(variant)
 
     // 光圈环：主体元素，先把「相机」立住。粗描边保证 40×40 下不糊。
-    let ringCenter = CGPoint(x: 462, y: 566)
+    //
+    // 位置按「圆环 + 角标」整体光学居中，而不是让圆环单独对齐画布中心：
+    // 角标是实心块，视觉重量不轻，只摆正圆环会让整体偏向右下。
+    // 当前取值使墨迹外接框正好落在 (512, 512)，此时圆环到左上与角标到右下的
+    // 距离相等（217 / 188），改动任一元素的位置都会破坏这个对称。
+    let ringCenter = CGPoint(x: 495, y: 558)
     let ringRadius: CGFloat = 236
     context.setStrokeColor(white)
     context.setLineWidth(84)
@@ -123,7 +128,7 @@ func draw(variant: Variant) -> CGImage {
     // 前摄画中画角标：3:4 竖幅，压在光圈右下方，对应应用默认的画中画位置。
     let pipWidth: CGFloat = 208
     let pipHeight = pipWidth * 4 / 3
-    let pipRect = CGRect(x: 566, y: 196, width: pipWidth, height: pipHeight)
+    let pipRect = CGRect(x: 599, y: 188, width: pipWidth, height: pipHeight)
 
     // 先在角标周围开一圈槽，让光圈从它背后穿过时留出干净间隙。
     // 没有这道间隙，两个白色形状会在小尺寸下粘连成一团。
