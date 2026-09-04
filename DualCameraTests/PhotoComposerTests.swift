@@ -125,6 +125,22 @@ final class PhotoComposerTests: XCTestCase {
         }
     }
 
+    /// 合成画布必须跟随后摄源图，而不是固定回 1440 长边。
+    func testComposedImageFollowsBackImageResolution() throws {
+        let large = UIGraphicsImageRenderer(size: CGSize(width: 1_536, height: 2_048)).image { context in
+            UIColor.red.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 1_536, height: 2_048))
+        }
+        let result = PhotoComposer.composeSynchronously(
+            backImage: large,
+            frontImage: image(color: .blue),
+            layout: .default,
+            aspectRatio: .threeByFour
+        )
+        let composed = try XCTUnwrap(try? result.get())
+        XCTAssertEqual(composed.size, CGSize(width: 1_536, height: 2_048))
+    }
+
     func testHorizontalSplitPlacesFrontImageInBottomHalf() throws {
         var layout = DualCameraLayout.default
         layout.style = .splitHorizontal

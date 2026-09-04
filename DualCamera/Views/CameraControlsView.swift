@@ -117,7 +117,8 @@ struct CameraControlsView: View {
                 }
             }
             Section("诊断") {
-                Text("\(camera.diagnostics.backFormat) / \(camera.diagnostics.frontFormat)")
+                Text("取景 \(camera.diagnostics.backFormat) / \(camera.diagnostics.frontFormat)")
+                Text("照片 \(camera.diagnostics.backPhotoDimensions) / \(camera.diagnostics.frontPhotoDimensions)")
                 Text(String(format: "%.0f fps · 硬件 %.2f · 压力 %.2f", camera.diagnostics.frameRate, camera.diagnostics.hardwareCost, camera.diagnostics.systemPressureCost))
             }
         } label: {

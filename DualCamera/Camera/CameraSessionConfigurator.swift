@@ -150,6 +150,8 @@ final class CameraSessionConfigurator {
                     backPort: backPort,
                     frontPort: frontPort,
                     quality: quality,
+                    backMaxPhotoDimensions: CameraFormatSelector.maximumPhotoDimensions(for: back.activeFormat),
+                    frontMaxPhotoDimensions: CameraFormatSelector.maximumPhotoDimensions(for: front.activeFormat),
                     // 单路原始文件始终保持相机自然方向；合成图镜像由 PhotoComposer 独立处理。
                     frontMirrored: false,
                     configurePortraitConnection: configurePortraitConnection
@@ -284,7 +286,7 @@ final class CameraSessionConfigurator {
         let back = attempt.backSelection.descriptor
         let front = attempt.frontSelection.descriptor
         CameraLog.session.info(
-            "格式尝试 back=\(back.width)x\(back.height) front=\(front.width)x\(front.height) fps=\(attempt.backSelection.frameRate) hardware=\(attempt.hardwareCost, privacy: .public) pressure=\(attempt.systemPressureCost, privacy: .public) accepted=\(attempt.isAccepted, privacy: .public)"
+            "格式尝试 back=\(back.width)x\(back.height)(照片 \(back.maxPhotoWidth)x\(back.maxPhotoHeight)) front=\(front.width)x\(front.height)(照片 \(front.maxPhotoWidth)x\(front.maxPhotoHeight)) fps=\(attempt.backSelection.frameRate) hardware=\(attempt.hardwareCost, privacy: .public) pressure=\(attempt.systemPressureCost, privacy: .public) accepted=\(attempt.isAccepted, privacy: .public)"
         )
     }
 }

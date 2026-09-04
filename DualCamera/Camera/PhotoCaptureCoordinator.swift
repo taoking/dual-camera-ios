@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreMedia
 import OSLog
 
 struct CapturedPhotoPair {
@@ -16,6 +17,7 @@ final class PhotoCaptureCoordinator {
     private var frontOutput: AVCapturePhotoOutput?
     private var frontConnection: AVCaptureConnection?
     private var processors = [UUID: PhotoCaptureProcessor]()
+    private var maxPhotoDimensionsByPosition = [AVCaptureDevice.Position: CMVideoDimensions]()
     private var timeoutWorkItem: DispatchWorkItem?
     private var completion: ((Result<CapturedPhotoPair, CameraError>) -> Void)?
 
@@ -30,6 +32,8 @@ final class PhotoCaptureCoordinator {
         backPort: AVCaptureInput.Port,
         frontPort: AVCaptureInput.Port,
         quality: CaptureQuality,
+        backMaxPhotoDimensions: CMVideoDimensions,
+        frontMaxPhotoDimensions: CMVideoDimensions,
         frontMirrored: Bool,
         configurePortraitConnection: (AVCaptureConnection, Bool) -> Void
     ) throws {
@@ -37,8 +41,6 @@ final class PhotoCaptureCoordinator {
         let frontOutput = AVCapturePhotoOutput()
         try add(backOutput, to: session, label: "后置照片")
         try add(frontOutput, to: session, label: "前置照片")
-        configurePhotoQuality(for: backOutput, quality: quality, label: "后摄")
-        configurePhotoQuality(for: frontOutput, quality: quality, label: "前摄")
 
         let backConnection = AVCaptureConnection(inputPorts: [backPort], output: backOutput)
         let frontConnection = AVCaptureConnection(inputPorts: [frontPort], output: frontOutput)
@@ -46,6 +48,26 @@ final class PhotoCaptureCoordinator {
         try add(frontConnection, to: session, label: "前置照片输出")
         configurePortraitConnection(backConnection, false)
         configurePortraitConnection(frontConnection, frontMirrored)
+
+        // 顺序不能调整：MultiCam 图用 addOutputWithNoConnections 建立，output 在连接
+        // 建立前没有视频源设备，此时设置 maxPhotoDimensions 会抛
+        // NSInvalidArgumentException 直接终止进程，而不是返回可捕获的 Swift 错误。
+        maxPhotoDimensionsByPosition = [
+            .back: backMaxPhotoDimensions,
+            .front: frontMaxPhotoDimensions
+        ]
+        configurePhotoQuality(
+            for: backOutput,
+            quality: quality,
+            maxPhotoDimensions: backMaxPhotoDimensions,
+            label: "后摄"
+        )
+        configurePhotoQuality(
+            for: frontOutput,
+            quality: quality,
+            maxPhotoDimensions: frontMaxPhotoDimensions,
+            label: "前摄"
+        )
 
         self.backOutput = backOutput
         self.frontOutput = frontOutput
@@ -94,6 +116,7 @@ final class PhotoCaptureCoordinator {
         frontOutput = nil
         frontConnection = nil
         processors.removeAll()
+        maxPhotoDimensionsByPosition.removeAll()
     }
 
     private func capture(
@@ -108,6 +131,10 @@ final class PhotoCaptureCoordinator {
             quality,
             maximum: output.maxPhotoQualityPrioritization
         )
+        // 不设置时系统只给该格式的默认（较小）尺寸；必须逐次请求才能拿到全分辨率。
+        if let dimensions = maxPhotoDimensionsByPosition[position] {
+            settings.maxPhotoDimensions = dimensions
+        }
         let processor = PhotoCaptureProcessor(position: position) { [weak self] result in
             self?.sessionQueue.async {
                 self?.finishCapture(
@@ -189,13 +216,18 @@ final class PhotoCaptureCoordinator {
     private func configurePhotoQuality(
         for output: AVCapturePhotoOutput,
         quality: CaptureQuality,
+        maxPhotoDimensions: CMVideoDimensions,
         label: String
     ) {
         let systemMaximum = output.maxPhotoQualityPrioritization
         let requested = Self.requestedPrioritization(quality, maximum: systemMaximum)
         // 必须在 Session 启动前设置；运行中变更由 Controller 受控重建。
         output.maxPhotoQualityPrioritization = requested
-        CameraLog.capture.info("\(label, privacy: .public) max quality=\(String(describing: systemMaximum), privacy: .public)，本次请求=\(String(describing: requested), privacy: .public)")
+        // 取不到有效尺寸时保持系统默认，宁可分辨率偏低也不要抛异常终止进程。
+        if maxPhotoDimensions.width > 0, maxPhotoDimensions.height > 0 {
+            output.maxPhotoDimensions = maxPhotoDimensions
+        }
+        CameraLog.capture.info("\(label, privacy: .public) max quality=\(String(describing: systemMaximum), privacy: .public)，本次请求=\(String(describing: requested), privacy: .public)，照片上限=\(maxPhotoDimensions.width, privacy: .public)x\(maxPhotoDimensions.height, privacy: .public)")
     }
 
     static func requestedPrioritization(

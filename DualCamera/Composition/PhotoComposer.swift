@@ -34,7 +34,7 @@ final class PhotoComposer {
             return .failure(.compositionFailed("无法读取前后摄照片尺寸。"))
         }
 
-        let outputSize = DualCameraLayoutEngine.outputSize(for: aspectRatio)
+        let outputSize = DualCameraLayoutEngine.outputSize(for: aspectRatio, sourceSize: backImage.size)
         let rendererFormat = UIGraphicsImageRendererFormat()
         rendererFormat.scale = 1
         rendererFormat.opaque = true

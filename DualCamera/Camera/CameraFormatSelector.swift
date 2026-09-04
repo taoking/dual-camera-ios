@@ -17,8 +17,41 @@ struct CameraFormatDescriptor: Equatable {
     let isMultiCamSupported: Bool
     let supportsVideoPixelFormat: Bool
     let isBinned: Bool
+    /// 该格式允许请求的最大照片尺寸。为 0 表示未知，此时回退到视频尺寸。
+    let maxPhotoWidth: Int32
+    let maxPhotoHeight: Int32
+
+    init(
+        identifier: String,
+        width: Int32,
+        height: Int32,
+        supports30FPS: Bool,
+        supports24FPS: Bool,
+        isMultiCamSupported: Bool,
+        supportsVideoPixelFormat: Bool,
+        isBinned: Bool,
+        maxPhotoWidth: Int32 = 0,
+        maxPhotoHeight: Int32 = 0
+    ) {
+        self.identifier = identifier
+        self.width = width
+        self.height = height
+        self.supports30FPS = supports30FPS
+        self.supports24FPS = supports24FPS
+        self.isMultiCamSupported = isMultiCamSupported
+        self.supportsVideoPixelFormat = supportsVideoPixelFormat
+        self.isBinned = isBinned
+        self.maxPhotoWidth = maxPhotoWidth
+        self.maxPhotoHeight = maxPhotoHeight
+    }
 
     var pixelCount: Int64 { Int64(width) * Int64(height) }
+
+    /// 照片排序依据。系统未给出照片尺寸时退回视频尺寸，避免该格式被当成 0 像素排到最后。
+    var maxPhotoPixelCount: Int64 {
+        let photoPixels = Int64(maxPhotoWidth) * Int64(maxPhotoHeight)
+        return photoPixels > 0 ? photoPixels : pixelCount
+    }
 
     func supports(frameRate: Int) -> Bool {
         switch frameRate {
@@ -41,8 +74,8 @@ struct CameraFormatCandidate {
 }
 
 enum CameraFormatSelector {
-    private static let targetPixels: Int64 = 1_280 * 720
-    private static let excessivePixels: Int64 = 1_920 * 1_080
+    /// 录像统一合成到竖屏 1080×1920 画布，采集端再高也只会被缩小，没有画质收益。
+    private static let videoTargetPixels: Int64 = 1_920 * 1_080
 
     static func rankedSelections(
         from descriptors: [CameraFormatDescriptor],
@@ -73,27 +106,35 @@ enum CameraFormatSelector {
         rankedSelections(from: descriptors, mode: mode).first
     }
 
+    /// 分数越低越优先。两种模式对分辨率的诉求相反，因此分开评分：
+    /// 照片要尽可能大，录像只需要够合成画布用。
     static func score(
         _ descriptor: CameraFormatDescriptor,
         frameRate: Int,
         mode: CameraCaptureMode
     ) -> Int64 {
-        let pixels = descriptor.pixelCount
-        let resolutionPenalty: Int64
-        if pixels < targetPixels {
-            // 低于目标会明显损失细节，权重高于略高于目标的格式。
-            resolutionPenalty = (targetPixels - pixels) * 4
-        } else {
-            resolutionPenalty = pixels - targetPixels
-        }
-
-        let excessivePenalty = pixels > excessivePixels
-            ? (pixels - excessivePixels) * 6
-            : 0
+        // 30fps 取景明显更顺滑，该差异的权重高于任何分辨率差异。
         let frameRatePenalty: Int64 = frameRate == 30 ? 0 : 10_000_000_000
-        let binningBonus: Int64 = descriptor.isBinned ? -100_000 : 0
-        let videoPenalty: Int64 = mode == .video && pixels > targetPixels ? pixels - targetPixels : 0
-        return frameRatePenalty + resolutionPenalty + excessivePenalty + videoPenalty + binningBonus
+
+        switch mode {
+        case .photo:
+            // 照片直接按可请求的最大照片尺寸倒序：像素越多分数越低。
+            // binning 会牺牲细节，在照片模式下是减分项而非加分项。
+            let binningPenalty: Int64 = descriptor.isBinned ? 1_000_000 : 0
+            return frameRatePenalty - descriptor.maxPhotoPixelCount + binningPenalty
+        case .video:
+            let pixels = descriptor.pixelCount
+            let resolutionPenalty: Int64
+            if pixels < videoTargetPixels {
+                // 低于画布分辨率会明显损失细节，权重高于略高于目标的格式。
+                resolutionPenalty = (videoTargetPixels - pixels) * 4
+            } else {
+                resolutionPenalty = pixels - videoTargetPixels
+            }
+            // 录像画布本就不需要全分辨率，binning 能降低成本与噪点。
+            let binningBonus: Int64 = descriptor.isBinned ? -100_000 : 0
+            return frameRatePenalty + resolutionPenalty + binningBonus
+        }
     }
 
     static func rankedCandidates(
@@ -108,7 +149,12 @@ enum CameraFormatSelector {
         var seenResolutionAndRate = Set<String>()
         return selections.compactMap { selection in
             let descriptor = selection.descriptor
-            let key = "\(descriptor.width)x\(descriptor.height)@\(selection.frameRate)"
+            // 照片模式下同一视频尺寸可能对应不同的最大照片尺寸，去重键必须带上后者，
+            // 否则分辨率更高的那个格式会被更早出现的同尺寸格式挤掉。
+            let photoKey = mode == .photo
+                ? "+\(descriptor.maxPhotoWidth)x\(descriptor.maxPhotoHeight)"
+                : ""
+            let key = "\(descriptor.width)x\(descriptor.height)@\(selection.frameRate)\(photoKey)"
             guard seenResolutionAndRate.insert(key).inserted else { return nil }
             guard let format = formatsByID[selection.descriptor.identifier] else { return nil }
             return CameraFormatCandidate(format: format, selection: selection)
@@ -125,6 +171,9 @@ enum CameraFormatSelector {
             kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
             kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
         ]
+        let largestPhoto = format.supportedMaxPhotoDimensions.max {
+            Int64($0.width) * Int64($0.height) < Int64($1.width) * Int64($1.height)
+        }
         return CameraFormatDescriptor(
             identifier: identifier,
             width: dimensions.width,
@@ -133,8 +182,17 @@ enum CameraFormatSelector {
             supports24FPS: supports(24, format: format),
             isMultiCamSupported: format.isMultiCamSupported,
             supportsVideoPixelFormat: supportedVideoSubtypes.contains(mediaSubtype),
-            isBinned: format.isVideoBinned
+            isBinned: format.isVideoBinned,
+            maxPhotoWidth: largestPhoto?.width ?? 0,
+            maxPhotoHeight: largestPhoto?.height ?? 0
         )
+    }
+
+    /// 该格式可请求的最大照片尺寸，供 PhotoOutput 与单次请求设置上限。
+    static func maximumPhotoDimensions(for format: AVCaptureDevice.Format) -> CMVideoDimensions {
+        format.supportedMaxPhotoDimensions.max {
+            Int64($0.width) * Int64($0.height) < Int64($1.width) * Int64($1.height)
+        } ?? CMVideoFormatDescriptionGetDimensions(format.formatDescription)
     }
 
     private static func supports(_ frameRate: Double, format: AVCaptureDevice.Format) -> Bool {

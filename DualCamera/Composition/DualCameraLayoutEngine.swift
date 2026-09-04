@@ -7,9 +7,33 @@ struct DualCameraFrames: Equatable {
 }
 
 enum DualCameraLayoutEngine {
-    static func outputSize(for aspectRatio: CaptureAspectRatio, longEdge: CGFloat = 1_440) -> CGSize {
-        let width = (longEdge * aspectRatio.ratio).rounded()
-        return CGSize(width: width, height: longEdge)
+    /// 源图尺寸不可用时的兜底画布长边。
+    static let fallbackLongEdge: CGFloat = 1_440
+    /// 画布长边上限。合成位图按 4 字节/像素常驻，再高的画布对观感提升有限，
+    /// 却会显著抬高内存峰值与 JPEG 编码耗时。
+    static let maximumLongEdge: CGFloat = 4_032
+
+    static func outputSize(for aspectRatio: CaptureAspectRatio, longEdge: CGFloat = fallbackLongEdge) -> CGSize {
+        let clamped = min(max(longEdge.rounded(), fallbackLongEdge), maximumLongEdge)
+        let width = (clamped * aspectRatio.ratio).rounded()
+        return CGSize(width: width, height: clamped)
+    }
+
+    /// 由后摄源图推导画布长边。后摄在三种布局里都是铺满或半幅的底图，
+    /// 以它为准可以让成片接近 1:1 呈现相机实际输出，而不是被固定画布压缩。
+    ///
+    /// 画布按 aspectFill 裁切源图，缩放系数取 `max(画布宽/源宽, 画布高/源高)`。
+    /// 只用源图长边会让窄画幅之外的比例发生上采样：例如 3024×4032 的源图配 1:1 画布
+    /// 会得到 4032×4032，宽度方向被放大 1.33 倍，凭空插值而没有真实细节。
+    /// 因此长边还要受 `源图短边 / 画幅比` 约束，保证任何画幅都不会上采样。
+    static func outputSize(for aspectRatio: CaptureAspectRatio, sourceSize: CGSize) -> CGSize {
+        let sourceLongEdge = max(sourceSize.width, sourceSize.height)
+        let sourceShortEdge = min(sourceSize.width, sourceSize.height)
+        guard sourceLongEdge > 0, sourceShortEdge > 0, aspectRatio.ratio > 0 else {
+            return outputSize(for: aspectRatio)
+        }
+        let widthLimitedLongEdge = sourceShortEdge / aspectRatio.ratio
+        return outputSize(for: aspectRatio, longEdge: min(sourceLongEdge, widthLimitedLongEdge))
     }
 
     static func aspectFitCanvas(in bounds: CGRect, aspectRatio: CaptureAspectRatio) -> CGRect {

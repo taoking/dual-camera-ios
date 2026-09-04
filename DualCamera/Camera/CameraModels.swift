@@ -380,6 +380,9 @@ struct CameraDiagnostics: Equatable {
     var deviceSummary: String = "等待相机配置"
     var backFormat: String = "—"
     var frontFormat: String = "—"
+    /// 当前格式实际可请求的最大照片尺寸，用于核对成片分辨率。
+    var backPhotoDimensions: String = "—"
+    var frontPhotoDimensions: String = "—"
     var frameRate: Double = 0
     var hardwareCost: Float = 0
     var systemPressureCost: Float = 0
