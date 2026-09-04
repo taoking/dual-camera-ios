@@ -26,7 +26,6 @@ final class MultiCamSessionController: NSObject, ObservableObject {
     @Published private(set) var recordingDuration: TimeInterval = 0
     @Published private(set) var latestPhotoSet: CapturedPhotoSet?
     @Published private(set) var latestVideoURL: URL?
-    @Published private(set) var notice: CameraNotice?
     @Published private(set) var availableRearCameras: [RearCameraOption] = []
     @Published private(set) var selectedRearCamera: RearCameraOption = .wide
     @Published private(set) var diagnostics = CameraDiagnostics.empty
@@ -36,6 +35,10 @@ final class MultiCamSessionController: NSObject, ObservableObject {
     let session: AVCaptureMultiCamSession
     let backPreviewLayer: AVCaptureVideoPreviewLayer
     let frontPreviewLayer: AVCaptureVideoPreviewLayer
+
+    /// 提示状态与发布时序由它拥有；本类型只负责切到主队列后转交。
+    let noticeCenter = CameraNoticeCenter()
+    var noticePublisher: Published<CameraNotice?>.Publisher { noticeCenter.$notice }
 
     private let sessionQueue = DispatchQueue(label: "com.taoking.dualcamera.session")
     private let lifecycle = CameraLifecycleCoordinator()
@@ -187,9 +190,9 @@ final class MultiCamSessionController: NSObject, ObservableObject {
     }
 
     func consumeNotice(_ consumed: CameraNotice) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.notice = CameraNoticePolicy.consuming(consumed, from: self.notice)
+        let center = noticeCenter
+        DispatchQueue.main.async {
+            center.consume(consumed)
         }
     }
 
@@ -931,7 +934,7 @@ final class MultiCamSessionController: NSObject, ObservableObject {
                 publishNotice(
                     error,
                     kind: .error,
-                    action: Self.action(for: error),
+                    action: CameraNoticeCenter.action(for: error),
                     mediaJobID: id
                 )
                 DispatchQueue.main.async { HapticService.error() }
@@ -946,7 +949,7 @@ final class MultiCamSessionController: NSObject, ObservableObject {
                 publishNotice(
                     message: "一个较早\(mediaName)未能保存：\(error.localizedDescription)",
                     kind: .error,
-                    action: Self.action(for: error),
+                    action: CameraNoticeCenter.action(for: error),
                     mediaJobID: id
                 )
             }
@@ -1428,37 +1431,14 @@ final class MultiCamSessionController: NSObject, ObservableObject {
         action: CameraNoticeAction = .none,
         mediaJobID: MediaSaveJobID? = nil
     ) {
-        DispatchQueue.main.async { [weak self] in
-            let notice = CameraNotice(
-                message: message,
-                kind: kind,
-                action: action,
-                mediaJobID: mediaJobID
-            )
-            guard let self,
-                  CameraNoticePolicy.shouldPublish(notice, replacing: self.notice) else { return }
-            self.notice = notice
-            guard action == .none else { return }
-            DispatchQueue.main.asyncAfter(deadline: .now() + 4) { [weak self] in
-                guard self?.notice == notice else { return }
-                self?.notice = nil
-            }
+        let center = noticeCenter
+        DispatchQueue.main.async {
+            center.publish(message: message, kind: kind, action: action, mediaJobID: mediaJobID)
         }
     }
 
     private func resolveMediaNotice(for id: MediaSaveJobID) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            self.notice = CameraNoticePolicy.resolvingMediaSave(id, from: self.notice)
-        }
-    }
-
-    private static func action(for error: CameraError) -> CameraNoticeAction {
-        switch error {
-        case .permissionDenied, .microphonePermissionDenied, .photoLibraryDenied:
-            .openAppSettings
-        default:
-            .retryMediaSaves
-        }
+        let center = noticeCenter
+        DispatchQueue.main.async { center.resolveMediaSave(id) }
     }
 }

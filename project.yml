@@ -32,7 +32,7 @@ targets:
         PRODUCT_NAME: "双摄相机"
         PRODUCT_MODULE_NAME: DualCamera
         SUPPORTS_MACCATALYST: NO
-        SWIFT_STRICT_CONCURRENCY: minimal
+        SWIFT_STRICT_CONCURRENCY: targeted
   DualCameraTests:
     type: bundle.unit-test
     platform: iOS

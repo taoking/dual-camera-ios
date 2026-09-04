@@ -278,7 +278,7 @@ final class CameraViewModel: ObservableObject {
         sessionController.$mediaSaveState.receive(on: DispatchQueue.main).assign(to: &$mediaSaveState)
         sessionController.$latestPhotoSet.receive(on: DispatchQueue.main).assign(to: &$latestPhotoSet)
         sessionController.$latestVideoURL.receive(on: DispatchQueue.main).assign(to: &$latestVideoURL)
-        sessionController.$notice
+        sessionController.noticePublisher
             .receive(on: DispatchQueue.main)
             .sink { [weak self] notice in
                 guard let self else { return }
