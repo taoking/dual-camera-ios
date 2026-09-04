@@ -45,6 +45,17 @@
 
 工程不包含个人 Team ID，默认 Bundle Identifier 为 `com.yourcompany.dualcamera`，安装前必须由开发者配置。
 
+## App Icon
+
+图标由 `DesignAssets/make-app-icon.swift` 生成，不是一张不可复现的位图：
+
+```sh
+swift DesignAssets/make-app-icon.swift DualCamera/Assets.xcassets/AppIcon.appiconset
+```
+
+图形语义是一个光圈环加右下角的画中画角标，对应应用的实际输出。脚本输出常规、
+深色、单色三份 1024，由 Xcode 自动派生全部尺寸；后两份背景透明，由系统合成。
+
 ## 安装到自己的 iPhone
 
 连上手机并保持解锁，然后：
