@@ -2,7 +2,7 @@ import AVFoundation
 import CoreMedia
 import CoreVideo
 
-enum CameraCaptureMode: Equatable {
+enum CameraCaptureMode: Hashable {
     case photo
     case video
 }
@@ -71,6 +71,32 @@ struct CameraFormatSelection: Equatable {
 struct CameraFormatCandidate {
     let format: AVCaptureDevice.Format
     let selection: CameraFormatSelection
+}
+
+/// 前后摄候选组合的身份。`AVCaptureDevice.Format` 既不可构造也不保证可判等，
+/// 因此身份只取评分输入里的标识与帧率——这也让去重逻辑可以脱离真实设备测试。
+struct FormatSelectionKey: Hashable {
+    let backIdentifier: String
+    let frontIdentifier: String
+    let backFrameRate: Int
+    let frontFrameRate: Int
+
+    init(back: CameraFormatSelection, front: CameraFormatSelection) {
+        backIdentifier = back.descriptor.identifier
+        frontIdentifier = front.descriptor.identifier
+        backFrameRate = back.frameRate
+        frontFrameRate = front.frameRate
+    }
+}
+
+/// 一组前后摄格式候选。作为成本验收的最小单元，也是配置器的缓存值。
+struct FormatCombination {
+    let back: CameraFormatCandidate
+    let front: CameraFormatCandidate
+
+    var selectionKey: FormatSelectionKey {
+        FormatSelectionKey(back: back.selection, front: front.selection)
+    }
 }
 
 enum CameraFormatSelector {

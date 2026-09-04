@@ -100,6 +100,43 @@ final class CameraFormatSelectorTests: XCTestCase {
         XCTAssertNil(CameraFormatSelector.select(from: [descriptor], mode: .video))
     }
 
+    // MARK: - 已验收组合缓存
+
+    /// 配置器用它把上次验收通过的组合从候选里去重，漏判会导致白试一轮成本验收。
+    func testSelectionKeyMatchesIdenticalCombination() {
+        XCTAssertEqual(key(back: "b", front: "f", frameRate: 30), key(back: "b", front: "f", frameRate: 30))
+    }
+
+    func testSelectionKeyDistinguishesEitherSide() {
+        let base = key(back: "b", front: "f", frameRate: 30)
+        XCTAssertNotEqual(base, key(back: "b", front: "other", frameRate: 30))
+        XCTAssertNotEqual(base, key(back: "other", front: "f", frameRate: 30))
+    }
+
+    /// 同一组格式在 30fps 与 24fps 下是不同候选，不能被当成同一条缓存。
+    func testSelectionKeyDistinguishesFrameRate() {
+        XCTAssertNotEqual(
+            key(back: "b", front: "f", frameRate: 30),
+            key(back: "b", front: "f", frameRate: 24)
+        )
+    }
+
+    private func key(back: String, front: String, frameRate: Int) -> FormatSelectionKey {
+        FormatSelectionKey(
+            back: selection(back, frameRate: frameRate),
+            front: selection(front, frameRate: frameRate)
+        )
+    }
+
+    private func selection(_ id: String, frameRate: Int) -> CameraFormatSelection {
+        let descriptor = descriptor(id, width: 1280, height: 720)
+        return CameraFormatSelection(
+            descriptor: descriptor,
+            frameRate: frameRate,
+            score: CameraFormatSelector.score(descriptor, frameRate: frameRate, mode: .photo)
+        )
+    }
+
     private func descriptor(
         _ id: String,
         width: Int32,

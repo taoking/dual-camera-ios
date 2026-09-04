@@ -28,6 +28,17 @@ final class CameraSessionConfigurator {
     private let photoCoordinator: PhotoCaptureCoordinator
     private let videoCoordinator: VideoCaptureCoordinator
 
+    /// 已通过成本验收的格式组合。切换拍照／录像模式、切镜头、改质量都会重建 Session，
+    /// 每次从零重跑成本搜索意味着最多 12 轮「改格式→建完整图→提交→读成本→拆图」，
+    /// 用户能直接感觉到按下录制键后的黑屏等待。命中缓存时只需 1 轮。
+    private var acceptedCombinations = [FormatCacheKey: FormatCombination]()
+
+    private struct FormatCacheKey: Hashable {
+        let backDeviceID: String
+        let frontDeviceID: String
+        let mode: CameraCaptureMode
+    }
+
     init(
         session: AVCaptureMultiCamSession,
         backPreviewLayer: AVCaptureVideoPreviewLayer,
@@ -60,8 +71,21 @@ final class CameraSessionConfigurator {
             throw CameraConfigurationError("前后摄没有共同可用的 30fps 或 24fps MultiCam 格式。")
         }
 
+        let key = FormatCacheKey(
+            backDeviceID: pair.back.uniqueID,
+            frontDeviceID: pair.front.uniqueID,
+            mode: mode
+        )
+        var ordered = Array(combinations.prefix(12))
+        if let cached = acceptedCombinations[key] {
+            // 上次验收通过的组合排到最前，并从其余候选中去重，避免白试一轮。
+            let cachedKey = cached.selectionKey
+            ordered.removeAll { $0.selectionKey == cachedKey }
+            ordered.insert(cached, at: 0)
+        }
+
         var lastAttempt: CameraCostAttempt?
-        for combination in combinations.prefix(12) {
+        for combination in ordered {
             tearDownGraph(cancelRecording: false)
             try apply(combination.back, to: pair.back)
             try apply(combination.front, to: pair.front)
@@ -81,6 +105,7 @@ final class CameraSessionConfigurator {
             lastAttempt = attempt
             log(attempt)
             if attempt.isAccepted {
+                acceptedCombinations[key] = combination
                 return CameraSessionConfiguration(
                     backDevice: pair.back,
                     frontDevice: pair.front,
@@ -93,6 +118,8 @@ final class CameraSessionConfigurator {
         }
 
         tearDownGraph(cancelRecording: false)
+        // 全部候选都不达标：缓存已失效（例如温度上升导致成本抬高），清掉以免下次继续优先它。
+        acceptedCombinations[key] = nil
         let cost = lastAttempt.map {
             String(format: "hardwareCost %.2f，systemPressureCost %.2f", $0.hardwareCost, $0.systemPressureCost)
         } ?? "无可用候选"
@@ -222,7 +249,7 @@ final class CameraSessionConfigurator {
     private func formatCombinations(
         back: [CameraFormatCandidate],
         front: [CameraFormatCandidate]
-    ) -> [(back: CameraFormatCandidate, front: CameraFormatCandidate)] {
+    ) -> [FormatCombination] {
         var selected = [(back: CameraFormatCandidate, front: CameraFormatCandidate)]()
         // 为 30fps 和 24fps 各保留固定尝试预算，避免格式很多时 24fps 永远排不到。
         for frameRate in [30, 24] {
@@ -242,7 +269,7 @@ final class CameraSessionConfigurator {
                 .prefix(6)
                 .map { (back: $0.0, front: $0.1) })
         }
-        return selected
+        return selected.map { FormatCombination(back: $0.back, front: $0.front) }
     }
 
     private func apply(_ candidate: CameraFormatCandidate, to device: AVCaptureDevice) throws {

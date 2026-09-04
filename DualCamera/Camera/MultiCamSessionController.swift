@@ -74,6 +74,11 @@ final class MultiCamSessionController: NSObject, ObservableObject {
     private var recordingBlockedByPressure = false
     private var pressureThrottled = false
     private var zoomGestureBaseFactor: CGFloat?
+    /// 上次生效的后摄缩放，以及它属于哪颗镜头。重建 Session 时用于判断该保留还是重置：
+    /// 起录、停录、改质量都会重建，此时把用户放大的画面弹回 1× 是明显的体验倒退；
+    /// 换镜头则必须重置，因为不同镜头的缩放范围与等效视角都不同。
+    private var preservedZoomFactor: CGFloat = 1
+    private var preservedZoomRearCamera: RearCameraOption?
     private var recordingTimer: Timer?
     private var recordingStartedAtUptime: TimeInterval?
     private var recordingAuthorizationPending = false
@@ -353,6 +358,7 @@ final class MultiCamSessionController: NSObject, ObservableObject {
                 let maximum = min(device.maxAvailableVideoZoomFactor, 6)
                 let value = min(max(base * scale, device.minAvailableVideoZoomFactor), maximum)
                 device.videoZoomFactor = value
+                self.preservedZoomFactor = value
                 self.publishZoom(value)
             } catch {
                 self.publishNotice(message: "无法调整缩放：\(error.localizedDescription)", kind: .error)
@@ -497,7 +503,12 @@ final class MultiCamSessionController: NSObject, ObservableObject {
         supportedRearCameras = configuration.supportedRearCameras
         isConfigured = true
         publishRearCameras(configuration.supportedRearCameras, selected: configuration.selectedRearCamera)
-        resetZoom(for: configuration.backDevice)
+        if preservedZoomRearCamera == configuration.selectedRearCamera {
+            restoreZoom(preservedZoomFactor, for: configuration.backDevice)
+        } else {
+            resetZoom(for: configuration.backDevice)
+        }
+        preservedZoomRearCamera = configuration.selectedRearCamera
         pressureThrottled = false
         runtimeMonitor.observePressure(back: configuration.backDevice, front: configuration.frontDevice)
         publishDiagnostics()
@@ -1187,14 +1198,29 @@ final class MultiCamSessionController: NSObject, ObservableObject {
     }
 
     private func resetZoom(for device: AVCaptureDevice) {
+        applyZoomLocked(1, to: device)
+    }
+
+    /// 同一颗镜头重建 Session 后恢复用户此前的缩放。目标值仍按新设备范围钳制，
+    /// 因为格式降级可能改变可用的缩放上限。
+    private func restoreZoom(_ factor: CGFloat, for device: AVCaptureDevice) {
+        applyZoomLocked(factor, to: device)
+    }
+
+    private func applyZoomLocked(_ factor: CGFloat, to device: AVCaptureDevice) {
         zoomGestureBaseFactor = nil
         do {
             try device.lockForConfiguration()
             defer { device.unlockForConfiguration() }
-            let value = min(max(1, device.minAvailableVideoZoomFactor), device.maxAvailableVideoZoomFactor)
+            let value = min(
+                max(factor, device.minAvailableVideoZoomFactor),
+                device.maxAvailableVideoZoomFactor
+            )
             device.videoZoomFactor = value
+            preservedZoomFactor = value
             publishZoom(value)
         } catch {
+            preservedZoomFactor = 1
             publishZoom(1)
         }
     }
