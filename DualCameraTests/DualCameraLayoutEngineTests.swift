@@ -129,6 +129,37 @@ final class DualCameraLayoutEngineTests: XCTestCase {
         XCTAssertEqual(size, CGSize(width: 2_268, height: 4_032))
     }
 
+    /// 视频合成走 CoreImage（原点左下、y 向上），布局引擎输出 UIKit 坐标（原点左上、y 向下）。
+    /// 漏掉这次翻转会让画中画在成片里跑到上下相反的角落。
+    func testCoreImageRectFlipsVerticalAxis() {
+        let canvasHeight: CGFloat = 1_920
+        // 贴住画布顶部的矩形，翻转后应贴住 CoreImage 的顶部（y 最大处）。
+        let topRect = CGRect(x: 100, y: 0, width: 200, height: 300)
+        let flippedTop = DualCameraLayoutEngine.coreImageRect(from: topRect, canvasHeight: canvasHeight)
+        XCTAssertEqual(flippedTop, CGRect(x: 100, y: 1_620, width: 200, height: 300))
+
+        // 贴住画布底部的矩形，翻转后 y 应为 0。
+        let bottomRect = CGRect(x: 100, y: 1_620, width: 200, height: 300)
+        let flippedBottom = DualCameraLayoutEngine.coreImageRect(from: bottomRect, canvasHeight: canvasHeight)
+        XCTAssertEqual(flippedBottom, CGRect(x: 100, y: 0, width: 200, height: 300))
+    }
+
+    func testCoreImageRectIsItsOwnInverse() {
+        let canvasHeight: CGFloat = 1_920
+        let original = CGRect(x: 40, y: 275, width: 320, height: 480)
+        let once = DualCameraLayoutEngine.coreImageRect(from: original, canvasHeight: canvasHeight)
+        let twice = DualCameraLayoutEngine.coreImageRect(from: once, canvasHeight: canvasHeight)
+        XCTAssertEqual(twice, original)
+    }
+
+    /// 水平方向不参与翻转：左边的东西在成片里仍应在左边。
+    func testCoreImageRectPreservesHorizontalPosition() {
+        let rect = CGRect(x: 0, y: 100, width: 200, height: 200)
+        let flipped = DualCameraLayoutEngine.coreImageRect(from: rect, canvasHeight: 1_920)
+        XCTAssertEqual(flipped.minX, 0)
+        XCTAssertEqual(flipped.width, 200)
+    }
+
     func testZeroSourceSizeFallsBackToDefaultCanvas() {
         let size = DualCameraLayoutEngine.outputSize(for: .threeByFour, sourceSize: .zero)
         XCTAssertEqual(size, DualCameraLayoutEngine.outputSize(for: .threeByFour))

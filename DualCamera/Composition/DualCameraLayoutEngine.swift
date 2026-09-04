@@ -36,6 +36,18 @@ enum DualCameraLayoutEngine {
         return outputSize(for: aspectRatio, longEdge: min(sourceLongEdge, widthLimitedLongEdge))
     }
 
+    /// 把 UIKit 习惯的矩形（原点左上、y 向下）转换为 CoreImage 坐标（原点左下、y 向上）。
+    /// 预览与照片合成都在 UIKit 坐标下工作，视频合成走 CoreImage，两者 y 轴方向相反；
+    /// 不转换会让画中画在成片里上下翻转到对角。
+    static func coreImageRect(from rect: CGRect, canvasHeight: CGFloat) -> CGRect {
+        CGRect(
+            x: rect.minX,
+            y: canvasHeight - rect.maxY,
+            width: rect.width,
+            height: rect.height
+        )
+    }
+
     static func aspectFitCanvas(in bounds: CGRect, aspectRatio: CaptureAspectRatio) -> CGRect {
         guard bounds.width > 0, bounds.height > 0 else { return .zero }
         let targetRatio = aspectRatio.ratio

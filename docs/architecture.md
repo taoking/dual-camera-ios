@@ -25,7 +25,7 @@ flowchart LR
 - `CameraSessionConfigurator`：筛选前后镜头组合，建立无自动连接的 MultiCam 图，并执行有限次数的成本验收。
 - `CameraFormatSelector`：把 AVFoundation 格式映射为纯数据描述；按 MultiCam、30／24fps、分辨率、过高分辨率、binning 和视频像素格式评分。
 - `PhotoCaptureCoordinator`、`PhotoCaptureProcessor`、`CaptureTransactionManager`：持有照片输出和 delegate，管理双路 UUID、重复／过期回调、4 秒超时、取消及相机原始文件数据。
-- `VideoCaptureCoordinator`、`DualCameraVideoRecorder`：持有视频／音频输出、近邻前摄帧、AVAssetWriter 生命周期和临时文件清理。
+- `VideoCaptureCoordinator`、`DualCameraVideoRecorder`：持有视频／音频输出、前摄帧新鲜度判定、AVAssetWriter 生命周期和临时文件清理。帧回调走独立的 `com.taoking.dualcamera.video-output` 队列；来自 Session 队列的生命周期调用一律 `sync` 进入该队列。合成布局由 `DualCameraLayoutEngine` 提供，与预览、照片同源。
 - `CameraLifecycleCoordinator`：用 `wantsSessionRunning`、active/background 和中断状态计算幂等动作；媒体查看页不参与 Session 启动资格判定。
 - `CameraAuthorizationService`：统一相机／麦克风授权结果；Controller 在回调后再次检查生命周期。
 - `CameraRuntimeMonitor`：持有 Session 通知和设备压力 KVO。
@@ -38,7 +38,7 @@ flowchart LR
 
 ## 串行性与状态
 
-所有 Session、连接、设备锁和拍摄 Coordinator 状态变更均进入 `com.taoking.dualcamera.session` 串行队列；图片合成和视频帧渲染不在主线程执行。照片 JPEG 处理与 PhotoKit 保存调度进入 `com.taoking.dualcamera.media-save` 独立队列，不阻塞 Session 队列；`@Published` 界面状态回到主队列。
+所有 Session、连接、设备锁和拍摄 Coordinator 状态变更均进入 `com.taoking.dualcamera.session` 串行队列；图片合成不在主线程执行。视频帧回调与合成在独立的 `com.taoking.dualcamera.video-output` 串行队列，避免逐帧渲染阻塞对焦、缩放、设备加锁和停止录制。照片 JPEG 处理与 PhotoKit 保存调度进入 `com.taoking.dualcamera.media-save` 独立队列，不阻塞 Session 队列；`@Published` 界面状态回到主队列。
 
 界面仍聚合展示 `CameraState`，内部另行发布：
 
@@ -51,7 +51,7 @@ flowchart LR
 ## 格式与成本降级
 
 1. 前后摄分别生成 MultiCam 候选；照片允许系统照片格式，视频还要求双平面 420 视频像素格式。
-2. 每个帧率内优先接近 1280×720；低于目标和高于 1080p 会被额外降权。
+2. 照片与录像分开评分。照片按格式可请求的最大照片尺寸倒序，binning 为减分项；录像以 1920×1080 为目标，binning 为加分项，因为成片统一合成到长边 1920 的画布。两种模式下 30fps 的权重都高于任何分辨率差异。
 3. 先尝试最多 6 组 30fps 组合，再尝试最多 6 组 24fps 组合，不无限重试。
 4. 每次完整提交 Session 图后读取 `hardwareCost` 和 `systemPressureCost`；两者都 `<= 1` 才接受，否则拆图并尝试下一组。
 5. 每次尝试记录前后尺寸、fps、成本和是否接受。全部失败时返回明确的不支持状态。
@@ -61,6 +61,10 @@ flowchart LR
 ## 拍照、质量与原始文件
 
 创建前后 `AVCapturePhotoOutput` 时，快速模式把输出上限和单次请求设为 `.speed`；均衡模式请求 `.balanced`，若系统上限只有 `.speed` 则钳制为 `.speed`。质量变化只在照片空闲时受控重建 Session，视频切回照片模式后会重新应用设置。
+
+照片输出与每次请求都显式设置 `maxPhotoDimensions` 为当前格式的上限，否则系统只给该格式的默认较小尺寸。这两项必须在连接建立之后设置：MultiCam 图用 `addOutputWithNoConnections` 搭建，output 在连接建立前没有视频源设备，此时写入会抛 `NSInvalidArgumentException` 直接终止进程，且该异常在 Swift 侧无法捕获。
+
+合成画布长边由后摄源图推导，并同时受「不上采样」与 4032 上限约束；不足 1440 时按 1440 兜底。
 
 `PhotoCaptureProcessor` 同时返回 `fileDataRepresentation()` 和用于合成的标准方向 `UIImage`。`CapturedPhotoSet` 保留 `backPhoto`、`frontPhoto` 和合成图：
 
@@ -101,7 +105,7 @@ SwiftUI 默认只显示左下角最近媒体缩略图和 saving/saved/failed 徽
 - 授权回调：重新检查上述条件，避免回调把后台 Session 拉起；
 - 中断结束：按同一状态机恢复；`mediaServicesWereReset` 重建前清空授权等待、Fake 录制、当次媒体序号和计时，并强制回到照片模式。普通 recorder 可取消并发布 idle；若旧 writer 已进入不可取消的 `finishWriting`，`VideoCaptureCoordinator.isFinishingRecording` 和 `VideoRecordingState.finishing` 都保持到旧回调，期间阻止新录像。
 
-视频保持固定画中画 720×1280 H.264 + AAC：没有视频帧会明确失败；早于首个视频时间戳的音频被忽略；stop 只能消费一次 recorder。录制状态条在请求麦克风时显示准备、录制时显示红点和基于 `systemUptime` 的单调计时，停止后保留最后时长并显示处理。时长不足一小时格式化为 `MM:SS`，长录制为 `HH:MM:SS`。
+视频成片长边 1920，画幅与布局跟随用户设置：9:16 为 1080×1920，3:4 为 1440×1920，1:1 为 1920×1920；编码为 HEVC，码率按像素数缩放；音频采用采集端 `recommendedAudioSettingsForAssetWriter` 的推荐参数，与麦克风实际格式一致。布局引擎输出 UIKit 坐标，视频合成走 CoreImage，两者 y 轴方向相反，必须经 `coreImageRect(from:canvasHeight:)` 翻转。前摄帧与后摄帧时间差超过 0.2 秒即不参与合成，避免把过期画面持续贴在成片上。没有视频帧会明确失败；早于首个视频时间戳的音频被忽略；stop 只能消费一次 recorder。录制状态条在请求麦克风时显示准备、录制时显示红点和基于 `systemUptime` 的单调计时，停止后保留最后时长并显示处理。时长不足一小时格式化为 `MM:SS`，长录制为 `HH:MM:SS`。
 
 录制写入失败时，未完成的 `.mov` 会立即清理；视频已生成但 PhotoKit 保存失败时，完整 `.mov` 则必须保留供恢复。`ManagedVideoPlayer` 在查看层消失时暂停并释放 PlayerItem。
 

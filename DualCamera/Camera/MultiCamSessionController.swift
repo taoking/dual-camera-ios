@@ -545,7 +545,12 @@ final class MultiCamSessionController: NSObject, ObservableObject {
         mediaRecoveryStore.markVideoInFlight(outputURL)
         do {
             try rebuildSessionLocked()
-            try videoCoordinator.start(outputURL: outputURL)
+            // 录像与预览、照片共用同一份布局与画幅，成片所见即所得。
+            try videoCoordinator.start(
+                outputURL: outputURL,
+                layout: captureLayout,
+                aspectRatio: captureAspectRatio
+            )
             activeRecordingURL = outputURL
             activeRecordingMediaSequence = nextMediaSequenceLocked()
             publishRecording(true)

@@ -13,7 +13,7 @@ final class VideoResourceTests: XCTestCase {
 
     func testRecorderWithoutVideoFramesFailsClearlyAndRemovesFile() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("empty-\(UUID().uuidString).mov")
-        let recorder = try DualCameraVideoRecorder(outputURL: url)
+        let recorder = try makeRecorder(url: url)
         var message: String?
         recorder.finish {
             if case .failure(let error) = $0 { message = error.localizedDescription }
@@ -24,7 +24,7 @@ final class VideoResourceTests: XCTestCase {
 
     func testRecorderFinishOnlyCompletesOnce() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("once-\(UUID().uuidString).mov")
-        let recorder = try DualCameraVideoRecorder(outputURL: url)
+        let recorder = try makeRecorder(url: url)
         var count = 0
         recorder.finish { _ in count += 1 }
         recorder.finish { _ in count += 1 }
@@ -40,7 +40,7 @@ final class VideoResourceTests: XCTestCase {
             .appendingPathComponent("retained-\(UUID().uuidString).mov")
         let completed = expectation(description: "停止结果已送达")
 
-        try coordinator?.start(outputURL: url)
+        try coordinator?.start(outputURL: url, layout: .default, aspectRatio: .nineBySixteen)
         XCTAssertTrue(coordinator?.stop { result in
             if case .success = result {
                 XCTFail("没有视频帧时应失败")
@@ -67,21 +67,34 @@ final class VideoResourceTests: XCTestCase {
             .appendingPathComponent("resumed-\(UUID().uuidString).mov")
         let completed = expectation(description: "旧录像收尾回调已送达")
 
-        try coordinator.start(outputURL: firstURL)
+        try coordinator.start(outputURL: firstURL, layout: .default, aspectRatio: .nineBySixteen)
         XCTAssertTrue(coordinator.stop { _ in completed.fulfill() })
         XCTAssertTrue(coordinator.isFinishingRecording)
 
         coordinator.cancelRecording()
         XCTAssertTrue(coordinator.isFinishingRecording)
-        XCTAssertThrowsError(try coordinator.start(outputURL: secondURL))
+        XCTAssertThrowsError(try coordinator.start(outputURL: secondURL, layout: .default, aspectRatio: .nineBySixteen))
 
         queue.resume()
         wait(for: [completed], timeout: 1)
         XCTAssertFalse(coordinator.isFinishingRecording)
 
-        try coordinator.start(outputURL: thirdURL)
+        try coordinator.start(outputURL: thirdURL, layout: .default, aspectRatio: .nineBySixteen)
         coordinator.cancelRecording()
         XCTAssertFalse(FileManager.default.fileExists(atPath: thirdURL.path))
+    }
+
+    private func makeRecorder(
+        url: URL,
+        layout: DualCameraLayout = .default,
+        aspectRatio: CaptureAspectRatio = .nineBySixteen
+    ) throws -> DualCameraVideoRecorder {
+        try DualCameraVideoRecorder(
+            outputURL: url,
+            layout: layout,
+            aspectRatio: aspectRatio,
+            audioSettings: nil
+        )
     }
 }
 
