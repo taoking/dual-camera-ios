@@ -33,3 +33,6 @@ docs/开发环境.md
 
 # 本机签名配置，不进仓库
 scripts/.device-config
+
+# 图标选型临时预览，选定后删除
+icon-candidates/

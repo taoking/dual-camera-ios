@@ -52,8 +52,9 @@ func roundedRect(_ rect: CGRect, radius: CGFloat) -> CGPath {
 
 func drawBackground(_ context: CGContext, variant: Variant) {
     guard variant == .standard else { return }
-    // 深蓝到亮蓝的对角渐变：沿用既有的蓝色identity，但把主体做成白色高对比图形。
-    let colors = [rgb(37, 99, 235), rgb(11, 20, 55)] as CFArray
+    // 浅天蓝到品牌蓝的对角渐变，配白色图形。
+    // 白色图形使深色与单色变体可直接复用同一套前景色，无需按底色另行调整。
+    let colors = [rgb(140, 193, 255), rgb(62, 120, 232)] as CFArray
     guard let gradient = CGGradient(
         colorsSpace: CGColorSpace(name: CGColorSpace.sRGB)!,
         colors: colors,
