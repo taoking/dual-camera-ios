@@ -104,4 +104,5 @@ Key invariants to preserve when touching this code:
 - `docs/architecture.md` — authoritative architecture reference, updated alongside behavior changes.
 - `README.md` — user-facing capability list and verification commands (Chinese).
 - `plan.md` / `docs/roadmap.md` — phase-by-phase status and what's explicitly out of scope for the current round; check before assuming a feature (e.g. video layout switching, 4K, ProRes) is in scope.
+- `docs/开发记录.md` — what changed in the 2026-09 round, why, and the pitfalls hit (AVFoundation ordering crash, coordinate-system flip, queue ownership). Read it before revisiting capture/video/icon decisions.
 - `docs/真机验收.md` — physical-device acceptance checklist; anything the simulator/Fake Camera Mode can't verify (real MultiCam cost values, lens combos, thermal pressure callbacks, focus, mic audio, final PhotoKit file orientation) is tracked there, not claimed as done from simulator results.

@@ -90,7 +90,9 @@ xcodebuild -project DualCamera.xcodeproj -scheme DualCamera \
 
 - [使用说明](docs/使用说明.md)：日常操作、权限与故障排查
 - [架构说明](docs/architecture.md)：职责、并发、布局与恢复策略
-- [真机验收](docs/真机验收.md)：iPhone 16 Pro 的待执行检查项
+- [开发记录](docs/开发记录.md)：本轮代码审核结论、五个批次的改动与踩过的坑
+- [真机验收](docs/真机验收.md)：iPhone 16 Pro 检查清单（含本轮已确认项）
+- [优化计划](docs/优化计划.md)：审核发现的问题与分批实施状态
 - [路线图](docs/roadmap.md)：范围边界与后续方向
 - [执行日志](docs/执行日志.md)：主要构建、测试、发布与真机安装结果
 - [变更记录](CHANGELOG.md)
